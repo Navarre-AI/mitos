@@ -1,0 +1,17 @@
+# Nothing local, secret, or historical goes into the image.
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+data/
+node_modules/
+*.log
+.DS_Store
+fly.toml
+Dockerfile
+.dockerignore
+bin/
+*.fmp12
+eval/sim-*.json
+eval/sim-*.md

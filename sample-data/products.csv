@@ -1,0 +1,29 @@
+product_id,name,category,price,tier,description
+PR0001,Canvas Sneakers,Shoes,45,budget,Canvas Sneakers — shoes in the budget range.
+PR0002,Vans Old Skool,Shoes,65,budget,Vans Old Skool — shoes in the budget range.
+PR0003,Running Trainers,Shoes,95,mid,Running Trainers — shoes in the mid range.
+PR0004,Leather Boots,Shoes,160,mid,Leather Boots — shoes in the mid range.
+PR0005,Ultraboost Pro,Shoes,190,premium,Ultraboost Pro — shoes in the premium range.
+PR0006,Handmade Oxfords,Shoes,320,premium,Handmade Oxfords — shoes in the premium range.
+PR0007,Budget Android,Phones,120,budget,Budget Android — phones in the budget range.
+PR0008,Mid-range 5G,Phones,340,budget,Mid-range 5G — phones in the budget range.
+PR0009,iPhone 13,Phones,599,mid,iPhone 13 — phones in the mid range.
+PR0010,iPhone 15 Pro,Phones,1099,premium,iPhone 15 Pro — phones in the premium range.
+PR0011,Foldable Flagship,Phones,1499,premium,Foldable Flagship — phones in the premium range.
+PR0012,House Blend 250g,Coffee,8,budget,House Blend 250g — coffee in the budget range.
+PR0013,Single-Origin 250g,Coffee,16,budget,Single-Origin 250g — coffee in the budget range.
+PR0014,Espresso Pods x40,Coffee,24,premium,Espresso Pods x40 — coffee in the premium range.
+PR0015,Cold Brew Concentrate,Coffee,19,mid,Cold Brew Concentrate — coffee in the mid range.
+PR0016,Reserve Geisha 100g,Coffee,65,premium,Reserve Geisha 100g — coffee in the premium range.
+PR0017,City Commuter,Bicycles,380,budget,City Commuter — bicycles in the budget range.
+PR0018,Gravel All-Road,Bicycles,1450,budget,Gravel All-Road — bicycles in the budget range.
+PR0019,Carbon Road Bike,Bicycles,3200,premium,Carbon Road Bike — bicycles in the premium range.
+PR0020,E-Mountain Bike,Bicycles,4600,premium,E-Mountain Bike — bicycles in the premium range.
+PR0021,Chromebook 11,Laptops,230,budget,Chromebook 11 — laptops in the budget range.
+PR0022,Ultrabook 14,Laptops,980,budget,Ultrabook 14 — laptops in the budget range.
+PR0023,Pro Workstation,Laptops,2400,premium,Pro Workstation — laptops in the premium range.
+PR0024,Creator Laptop,Laptops,3100,premium,Creator Laptop — laptops in the premium range.
+PR0025,Wired Earbuds,Headphones,15,budget,Wired Earbuds — headphones in the budget range.
+PR0026,Bluetooth Buds,Headphones,79,budget,Bluetooth Buds — headphones in the budget range.
+PR0027,Over-ear ANC,Headphones,299,premium,Over-ear ANC — headphones in the premium range.
+PR0028,Studio Reference,Headphones,549,premium,Studio Reference — headphones in the premium range.

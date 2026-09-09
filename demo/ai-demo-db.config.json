@@ -1,0 +1,67 @@
+{
+  "_readme": "Tables config for a FileMaker demo solution. Copy this object into data/config.json on the instance (or POST it once a config endpoint exists), set FM_HOST/FM_DB/FM_USER/FM_PASS secrets, and sync. Field names were extracted from a Save a Copy as XML export kept outside this repo; enrichment prompts are adapted from the fmSearchResults scripts inside the file itself. Known issue: OData on that file returned -1020 'Table cDate not defined' on every entity; fix the cDate calc (HotelReview) in the file first.",
+  "tables": {
+    "Person": {
+      "pk": "ID",
+      "textFields": [
+        "First",
+        "Last",
+        "cFullName",
+        "Title",
+        "Email"
+      ],
+      "displayFields": [
+        "cFullName",
+        "Title",
+        "Email"
+      ],
+      "enrichPrompt": "You generate realistic name variants for use in a semantic search index.\nInput: a person's first and last name (may include accents, punctuation, or non-Latin characters), plus title and email when present.\nOutput: one dense block of search-matchable text.\nAlways include:\n- The original name (first)\n- \"LastName, FirstName\" form\n- Accent-free spelling\n- Common nicknames or diminutives (Bob/Robert, Peg/Margaret)\n- Phonetic spellings someone might type after hearing the name\n- Transliteration variants if relevant (including Greek and Cyrillic forms)\n- The email address, and the title if present\nDo not invent biographical facts. Only expand what is present in the record."
+    },
+    "Organization": {
+      "pk": "ID",
+      "textFields": [
+        "Name",
+        "Address",
+        "City",
+        "State",
+        "PostalCode",
+        "Org Type",
+        "MarketingCategories",
+        "Website"
+      ],
+      "displayFields": [
+        "Name",
+        "Org Type",
+        "City",
+        "State"
+      ],
+      "textJoin": {
+        "table": "Person",
+        "localKey": "ID",
+        "remoteKey": "ID_Org",
+        "remoteField": "cFullName",
+        "label": "people"
+      },
+      "enrichPrompt": "You generate realistic variants for organizations for use in a semantic search index.\nInput: organization name, address, city, state, org type, marketing categories, website.\nOutput: one dense block of text optimized for embedding and semantic search.\nAlways include:\n- The original organization name (at top) and the original address\n- Alternate names, shortened forms, and plausible misspellings of the name\n- Plain-language descriptions of what the organization does, derived from its name, type, and categories (a cardiac clinic -> heart clinic, cardiology practice, heart doctors)\n- Industry synonyms and natural-language phrasings a user might type\n- If a list of people is given, include their names verbatim so searching a person finds their employer\nDo not invent services the record does not imply."
+    },
+    "Product": {
+      "pk": "ID",
+      "textFields": [
+        "Brand",
+        "Model",
+        "Category",
+        "Color",
+        "Description",
+        "Retail",
+        "Cost"
+      ],
+      "displayFields": [
+        "Brand",
+        "Model",
+        "Category",
+        "Retail"
+      ],
+      "enrichPrompt": "You generate enriched product data optimized for embedding and semantic search.\nInput: product category, brand, model name, color, price, and description.\nOutput: one dense block of plain text with no prefixes, labels, headers, or commentary, containing:\n- Variant names: the original product name plus alternate phrasings, common abbreviations, and informal names people might search for\n- Enriched description: the original description expanded with natural phrasing a shopper might use; always keep all original information\n- Color variants: the original color plus 5-8 similar shades and common names (for red: crimson, cherry, burgundy, wine, brick red, maroon)\n- Price-relative descriptors matched to the price RELATIVE TO THE CATEGORY; what counts as budget or luxury depends entirely on the product type (shoes: under $50 cheap, $50-150 mid-range, over $200 premium; electronics and other categories scale accordingly). Include the literal price with and without a dollar sign.\nDo not invent features the record does not mention."
+    }
+  }
+}

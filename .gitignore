@@ -1,0 +1,21 @@
+.env
+node_modules/
+*.log
+.DS_Store
+data/
+
+# Per-install, written by setup from fly.template.toml
+fly.toml
+bin/
+
+# Reference exports from FileMaker (validation artifacts, not runtime deps)
+from-filemaker/
+
+# Not part of the product (added by the pre-push audit, 2026-09-09)
+*.fmp12
+Import.log
+docs/PREPUSH-AUDIT.md
+HANDOFF-*.md
+handoff/
+eval/sim-*.md
+!filemaker/Mitos.fmp12
