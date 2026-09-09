@@ -1,0 +1,722 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mitos</title>
+<style>
+  :root { --bg:#101418; --panel:#1a2027; --text:#e6e9ec; --dim:#8b96a0; --accent:#d9a441; --line:#2a323b;
+          --ok:#4caf7d; --warn:#d98041; color-scheme:dark; }
+  /* Light theme: the system's choice by default, a switch to override,
+     remembered per browser. */
+  :root[data-theme="light"] { --bg:#f6f7f8; --panel:#ffffff; --text:#1c2328; --dim:#5f6b76; --accent:#b8821f; --line:#d9dee3;
+          --ok:#2e8b57; --warn:#c2621f; color-scheme:light; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.5 -apple-system, "Segoe UI", sans-serif; }
+  .wrap { max-width:720px; margin:0 auto; padding:32px 20px 80px; }
+  h1 { font-size:20px; font-weight:600; margin:0 0 4px; }
+  h1 .thread { color:var(--accent); }
+  .tag { color:var(--dim); font-size:13px; margin:0 0 24px; }
+  #q { width:100%; padding:14px 16px; font-size:17px; color:var(--text); background:var(--panel);
+       border:1px solid var(--line); border-radius:10px; outline:none; }
+  #q:focus { border-color:var(--accent); }
+  .meta { color:var(--dim); font-size:12px; margin:10px 2px 18px; min-height:18px; }
+  .group { margin-bottom:22px; }
+  .group h2 { font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:var(--dim); margin:0 0 8px; }
+  .row { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:10px 14px;
+         background:var(--panel); border:1px solid var(--line); border-radius:8px; margin-bottom:6px; cursor:pointer; }
+  .row:hover { border-color:var(--accent); }
+  .row .main { overflow:hidden; }
+  /* One line of title, one of detail, never more (Matt, 2026-09-09). */
+  .row .title { font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .row .why { color:var(--accent); font-size:12px; margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .row .sub { color:var(--dim); font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .score { color:var(--dim); font-size:11px; flex-shrink:0; max-width:40%; text-align:right; line-height:1.4; }
+  .score.title { color:var(--accent); }
+  .empty { border:1px dashed var(--line); border-radius:10px; padding:18px 20px; color:var(--dim); font-size:14px; }
+  .empty b { color:var(--text); }
+  .empty button { margin-top:10px; }
+  .status { position:fixed; bottom:0; left:0; right:0; background:var(--panel); border-top:1px solid var(--line);
+            padding:8px 20px; font-size:12px; color:var(--dim); display:flex; justify-content:space-between; align-items:center; }
+  .status button { background:none; border:1px solid var(--line); color:var(--dim); border-radius:6px;
+                   padding:4px 10px; font-size:12px; cursor:pointer; }
+  .status button:hover { color:var(--text); border-color:var(--accent); }
+  .expanded { color:var(--dim); font-size:12px; font-style:italic; margin:0 2px 14px; display:none; }
+  .ver { color:var(--line); font-size:11px; font-variant-numeric:tabular-nums; }
+  .statleft { display:flex; align-items:center; gap:12px; min-width:0; }
+
+
+  /* ---- Settings (three-tab modal, Pythia layout) ---- */
+  .tabs { display:flex; gap:4px; padding:0 18px; border-bottom:1px solid var(--line); }
+  .tabs button { background:none; border:1px solid transparent; border-bottom:none; color:var(--dim);
+                 padding:8px 16px; font-size:14px; cursor:pointer; border-radius:8px 8px 0 0; }
+  .tabs button.on { color:var(--text); border-color:var(--line); background:var(--bg); font-weight:600; }
+  .card { border:1px solid var(--line); border-radius:10px; padding:16px; margin-bottom:16px; background:var(--bg); }
+  .card h3 { font-size:11px; text-transform:uppercase; letter-spacing:.1em; color:var(--dim); margin:0 0 10px; }
+  .card h3 .hint { text-transform:none; letter-spacing:0; font-weight:400; margin-left:8px; }
+  .connline { display:flex; align-items:center; gap:10px; }
+  .connline .dot { width:9px; height:9px; border-radius:50%; background:var(--dim); flex-shrink:0; }
+  .connline .dot.ok { background:var(--ok); }
+  .connline .txt { flex:1; font-size:14px; }
+  .structline { display:flex; align-items:center; gap:12px; color:var(--dim); font-size:13px; margin-top:12px; }
+  label { display:block; font-size:12px; color:var(--dim); margin:12px 0 4px; }
+  input[type=text], input[type=password], textarea, select {
+    width:100%; padding:8px 10px; font-size:14px; color:var(--text); background:var(--panel);
+    border:1px solid var(--line); border-radius:8px; outline:none; font-family:inherit; }
+  input:focus, textarea:focus { border-color:var(--accent); }
+  textarea { min-height:90px; font-size:13px; resize:vertical; }
+  select { width:auto; }
+  button.btn:disabled, #rebuild:disabled { opacity:.5; cursor:default; }
+  button.btn { background:none; border:1px solid var(--line); color:var(--text); border-radius:8px;
+               padding:7px 14px; font-size:13px; cursor:pointer; }
+  button.btn:hover { border-color:var(--accent); }
+  button.btn.primary { background:var(--accent); border-color:var(--accent); color:#1a1408; font-weight:600; }
+  .btns { display:flex; gap:8px; margin-top:14px; align-items:center; flex-wrap:wrap; }
+  .note { font-size:12px; color:var(--dim); min-height:16px; }
+  .intro { font-size:13px; color:var(--dim); margin:0 0 4px; }
+  /* Tables tab */
+  .tblbar { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:10px; }
+  .tblbar .grow { flex:1; }
+  .tblhead { display:flex; color:var(--dim); font-size:11px; text-transform:uppercase; letter-spacing:.08em;
+             padding:6px 10px; border-bottom:1px solid var(--line); }
+  .tbl { border-bottom:1px solid var(--line); }
+  .tbl .line { display:flex; align-items:center; gap:10px; padding:9px 10px; }
+  .tbl .nm { flex:1; font-size:14px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+             display:flex; align-items:baseline; gap:8px; }
+  .tbl .nm b { font-weight:600; }
+  .tbl .raw { color:var(--dim); font-size:12px; font-family:ui-monospace, Menlo, monospace; }
+  .tbl .occ { color:var(--dim); font-size:11px; border:1px solid var(--line); border-radius:10px; padding:0 6px; }
+  .tbl .keyf { color:var(--dim); font-size:11px; font-family:ui-monospace, Menlo, monospace; opacity:.75; }
+  .dbrow { display:flex; align-items:center; gap:10px; padding:10px 12px; border:1px solid var(--line);
+           border-radius:8px; margin-bottom:6px; cursor:pointer; }
+  .dbrow:hover { border-color:var(--accent); }
+  .dbrow.on { border-color:var(--accent); background:rgba(217,164,65,.08); }
+  .dbrow .dbname { flex:1; font-size:14px; }
+  .tblsplit { color:var(--dim); font-size:11px; text-transform:uppercase; letter-spacing:.08em;
+              margin:16px 0 4px; padding-top:10px; border-top:1px solid var(--line); }
+  .tbl .num { width:90px; text-align:right; font-variant-numeric:tabular-nums; font-size:13px; }
+  .tbl .fnum { width:50px; text-align:right; color:var(--dim); font-size:13px; }
+  .badge { font-size:11px; border-radius:10px; padding:2px 9px; }
+  .badge.sync { background:rgba(76,175,125,.15); color:var(--ok); }
+  .badge.warnb { color:var(--warn); background:none; }
+  .pencil { cursor:pointer; color:var(--dim); font-size:13px; }
+  .pencil:hover { color:var(--accent); }
+  .tbl .cfg { display:none; padding:0 10px 14px 34px; }
+  .tbl.open .cfg { display:block; }
+  .kv { display:flex; gap:18px; font-size:13px; }
+  .kv .k { color:var(--dim); width:90px; flex-shrink:0; }
+  .keyprev { color:var(--dim); font-size:12px; }
+</style>
+<style>
+  /* ---- Overlays and panels (Pythia's components, Mitos's palette) ---- */
+  .overlay { position:fixed; inset:0; background:rgba(0,0,0,.62); display:none; align-items:center; justify-content:center; z-index:40; }
+  .overlay.open { display:flex; }
+  .panel { width:min(640px,94vw); max-height:88vh; background:var(--panel); border:1px solid var(--line); border-radius:14px; display:flex; flex-direction:column; }
+  .p-head { padding:14px 18px; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; align-items:baseline; gap:12px; }
+  .p-head strong { font-size:16px; }
+  .p-list { flex:1 1 auto; min-height:0; overflow-y:auto; padding:6px 18px; }
+  .p-foot { display:flex; gap:10px; padding:13px 18px; border-top:1px solid var(--line); align-items:center; }
+  .p-foot .sp, .sp { flex:1; }
+  #settings .panel { height:calc(100vh - 56px); max-height:none; width:clamp(720px,80vw,1400px); max-width:96vw; }
+  .link { background:none; border:0; color:var(--accent); font-size:12.5px; cursor:pointer; padding:0; }
+  .link.danger { color:var(--warn); }
+  .set-row { display:flex; align-items:center; gap:8px; padding:4px 0; flex-wrap:wrap; }
+  .field { display:flex; flex-direction:column; gap:6px; margin-bottom:14px; }
+  .field > span { font-size:12.5px; font-weight:500; color:var(--dim); }
+  .fmline { display:flex; align-items:flex-end; gap:10px; flex-wrap:wrap; }
+  .fmline .field { margin-bottom:0; flex:1 1 160px; min-width:140px; }
+  .fmsum { display:flex; align-items:center; gap:10px; font-size:13.5px; }
+  .fmsum .dot { width:8px; height:8px; border-radius:50%; flex:none; background:var(--dim); }
+  .fmsum .dot.on { background:var(--ok); box-shadow:0 0 6px var(--ok); }
+  .fmsum .dot.warn { background:var(--warn); }
+  .scanhero { text-align:center; padding:28px 22px; border-style:dashed; }
+  .scanhero p { color:var(--dim); font-size:13.5px; margin:0 0 14px; max-width:46ch; margin-left:auto; margin-right:auto; }
+  .trow { display:flex; align-items:center; gap:10px; padding:7px 2px; border-bottom:1px solid var(--line); font-size:13.5px; }
+  .tlabel { flex:1 1 auto; display:flex; align-items:baseline; gap:7px; min-width:180px; overflow:hidden; }
+  .tlabel .fn { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .tlabel .rn { color:var(--dim); font-size:11.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .upfile { display:flex; align-items:center; gap:8px; padding:6px 10px; border:1px solid var(--line); border-radius:8px; background:var(--panel); margin-bottom:6px; font-size:12.5px; }
+  .upfile .nm { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--text); }
+  .upfile .meta { color:var(--dim); flex:none; }
+  .upfile .rm { background:none; border:0; color:var(--dim); font-size:15px; padding:0 4px; flex:none; cursor:pointer; }
+  .upfile .rm:hover { color:var(--warn); }
+  /* ---- The setup wizard: seven steps, one screen each ---- */
+  #wizOverlay .panel { width:clamp(560px,62vw,880px); max-width:96vw; max-height:calc(100vh - 56px); }
+  .wiz-rail { display:flex; gap:4px; padding:12px 18px 2px; }
+  .wiz-rail .wr { flex:1 1 0; display:flex; align-items:center; gap:7px; min-width:0; font-size:11.5px; color:var(--dim); }
+  .wiz-rail .wn { width:20px; height:20px; border-radius:50%; flex:none; display:inline-flex; align-items:center; justify-content:center; font-size:11px; font-weight:700; background:var(--bg); color:var(--dim); }
+  .wiz-rail .wl { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .wiz-rail .wr.done .wn { background:rgba(76,175,125,.18); color:var(--ok); }
+  .wiz-rail .wr.done { color:var(--dim); }
+  .wiz-rail .wr.cur .wn { background:var(--accent); color:#1a1408; }
+  .wiz-rail .wr.cur { color:var(--text); font-weight:600; }
+  .wiz-body { padding:16px 18px 6px; }
+  .wiz-why { color:var(--dim); font-size:13px; margin:0 0 14px; }
+  .wiz-pre { background:var(--bg); border:1px solid var(--line); border-radius:10px; padding:11px 13px; margin:0 0 15px; font-size:12.5px; color:var(--dim); }
+  .wiz-pre b { color:var(--text); font-weight:600; }
+  .wiz-pre div { padding:2px 0; }
+  .wiz-ok { display:none; align-items:center; gap:8px; color:var(--ok); font-size:13.5px; margin:14px 0 2px; }
+  .wiz-ok.on { display:flex; }
+  .wiz-err { display:none; color:var(--warn); font-size:13px; margin:14px 0 2px; line-height:1.5; }
+  .wiz-err.on { display:block; }
+  .wiz-list { max-height:min(44vh,400px); overflow-y:auto; border:1px solid var(--line); border-radius:10px; }
+  .wiz-list label { display:flex; align-items:center; gap:10px; padding:8px 12px; border-bottom:1px solid var(--line); font-size:13.5px; cursor:pointer; margin:0; color:var(--text); }
+  .wiz-list label:last-child { border-bottom:0; }
+  .wiz-list input { width:17px; height:17px; accent-color:var(--accent); flex:none; }
+  .wiz-list .wnm { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .wiz-list .wct { width:92px; flex:none; text-align:right; font-variant-numeric:tabular-nums; color:var(--dim); font-size:12.5px; }
+  .wizprov, .aiprov { padding:7px 16px; border:0; cursor:pointer; font-size:13px; background:transparent; color:var(--text); }
+  .wizprov.on, .aiprov.on { background:var(--accent); color:#1a1408; }
+  /* ---- The scan window ---- */
+  #scanOverlay .panel { width:clamp(500px,55vw,1100px); max-width:96vw; max-height:calc(100vh - 56px); }
+  #scanLog { font:12px/1.75 ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--dim); white-space:pre-wrap; min-height:90px; }
+  #scanLog .t, #syncLog .t { color:var(--line); margin-right:7px; }
+  #scanLog .warn, #syncLog .warn { color:var(--warn); }
+  #scanLog .ok, #syncLog .ok { color:var(--ok); }
+  /* ---- The sync modal: a window onto a server-side job ---- */
+  #syncOverlay .panel { width:clamp(700px,80vw,1400px); max-width:96vw; height:min(85vh,820px); max-height:none; position:relative; }
+  .spin { width:16px; height:16px; border:2px solid var(--line); border-top-color:var(--accent); border-radius:50%; animation:spin 900ms linear infinite; flex:none; margin-right:12px; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  @keyframes barpulse { 0%,100% { opacity:.3; } 50% { opacity:.85; } }
+  @keyframes ellip { 0%{content:""} 25%{content:"."} 50%{content:".."} 75%{content:"..."} 100%{content:""} }
+  .ell::after { content:""; display:inline-block; width:1.1em; text-align:left; animation:ellip 1.4s steps(4,end) infinite; }
+  .sync-overall { height:10px; background:var(--bg); border-radius:6px; overflow:hidden; margin:16px 0 22px; }
+  .sync-overall > div { height:100%; background:var(--accent); width:0; transition:width .3s; }
+  .sync-overall > div.pulse, .sync-t .track > div.pulse { animation:barpulse 1.5s ease-in-out infinite; }
+  .sync-now { position:sticky; top:0; z-index:3; margin:-8px 0 10px; padding:8px 12px; border:1px solid var(--line); border-radius:9px; background:var(--bg); font-size:13px; }
+  .sync-now .sn-top { display:flex; align-items:baseline; gap:10px; min-height:18px; }
+  .sync-now .sn-tbl { font-weight:600; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .sync-now .sn-st { color:var(--dim); flex:none; }
+  .sync-now .sn-prog { color:var(--dim); flex:none; margin-left:auto; font-variant-numeric:tabular-nums; }
+  .sync-now .sn-line { display:block; margin-top:3px; font:11.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-height:17px; }
+  .sync-now .sn-line.warn { color:var(--warn); }
+  .sync-now .sn-line.ok { color:var(--ok); }
+  .sync-t { display:flex; align-items:center; gap:12px; padding:8px 0; font-size:13.5px; }
+  .sync-t .nm { flex:0 1 clamp(220px,38vw,640px); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .sync-t .track { flex:1; height:8px; background:var(--bg); border-radius:5px; overflow:hidden; }
+  .sync-t .track > div { height:100%; background:var(--accent); width:0; transition:width .3s; }
+  .sync-t .st { width:150px; text-align:right; color:var(--dim); font-size:12px; font-variant-numeric:tabular-nums; }
+  .sync-t.done .track > div { background:var(--ok); }
+  .sync-t.done .st { color:var(--ok); }
+  .sync-t.err .st { color:var(--warn); }
+  .sync-t.err .track > div { background:var(--warn); }
+  .sync-t.dropped .nm { color:var(--dim); text-decoration:line-through; }
+  .sync-t.dropped .st { color:var(--warn); }
+  .sync-logtog { display:inline-flex; align-items:center; gap:5px; margin-top:12px; font-size:12px; font-weight:600; color:var(--dim); text-transform:uppercase; letter-spacing:.04em; cursor:pointer; user-select:none; }
+  .sync-logtog:hover { color:var(--text); }
+  .sync-logtog .dt { display:inline-block; transition:transform .15s; }
+  .sync-logtog.open .dt { transform:rotate(90deg); }
+  #syncLog { background:var(--bg); border:1px solid var(--line); border-radius:9px; padding:9px 12px; max-height:min(30vh,320px); overflow-y:auto; font:12px/1.7 ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--dim); margin-top:8px; }
+  #syncLog div { white-space:pre-wrap; }
+  .sync-done-h { display:flex; align-items:center; gap:7px; margin:4px 0 2px; padding:5px 10px; border-radius:7px; font-size:12.5px; color:var(--ok); cursor:pointer; user-select:none; }
+  .sync-done-h:hover { background:var(--bg); }
+  .sync-done-h .dt { display:inline-block; transition:transform .15s; color:var(--dim); }
+  .sync-done-h.open .dt { transform:rotate(90deg); }
+  .sync-done-b { display:none; }
+  .sync-done-h.open + .sync-done-b { display:block; }
+  .rot { transition:opacity .3s; }
+  /* Pythia's table rows: the line is the control; click expands in place. */
+  .frow { display:flex; gap:14px; flex-wrap:wrap; }
+  .provbtn { padding:7px 16px; border:0; cursor:pointer; font-size:13px; background:transparent; color:var(--text); }
+  .provbtn.on { background:var(--accent); color:#1a1408; }
+  .trow, .thead { display:flex; align-items:center; gap:10px; padding:7px 2px; border-bottom:1px solid var(--line); font-size:13.5px; }
+  .trow { cursor:pointer; }
+  .trow:hover { background:var(--bg); }
+  .trow input[type=checkbox] { width:17px; height:17px; accent-color:var(--accent); flex:none; cursor:pointer; margin:0; }
+  .thead { color:var(--dim); font-size:10.5px; font-weight:600; text-transform:uppercase; letter-spacing:.06em; padding:4px 2px; }
+  .thead .cb { width:17px; flex:none; } .thead .fill { flex:1; }
+  .tnum { width:76px; flex:none; text-align:right; font-variant-numeric:tabular-nums; }
+  .tnum.f { width:52px; }
+  .tdotw { width:26px; flex:none; display:flex; justify-content:center; }
+  .tdot { width:9px; height:9px; border-radius:50%; display:inline-block; flex:none; }
+  .tdot.ok { background:var(--ok); }
+  .tdot.slow { background:var(--accent); }
+  .tdot.err { background:var(--warn); }
+  .tdot.off { background:transparent; border:1.5px solid var(--dim); }
+  .tgroup { display:flex; justify-content:space-between; align-items:baseline; font-size:11.5px; font-weight:600; letter-spacing:.05em; text-transform:uppercase; color:var(--dim); margin:16px 0 4px; padding:5px 0; border-bottom:1px solid var(--line); }
+  .tgroup span { font-weight:400; text-transform:none; letter-spacing:0; margin-right:81px; }
+  .texp { padding:2px 8px 14px 32px; font-size:12.5px; color:var(--dim); background:var(--bg); border-radius:0 0 8px 8px; }
+  .texp-rename { display:flex; gap:8px; align-items:center; margin:8px 0 10px; }
+  /* The fold triangle at the top left of an open row: one click folds it. */
+  .texp-fold { background:none; border:0; color:var(--dim); font-size:18px; line-height:1; padding:0 4px; cursor:pointer; flex:none; margin-left:-24px; width:24px; text-align:left; }
+  .texp-fold:hover { color:var(--accent); }
+  /* The wizard's last step: the scripts to add to the file. */
+  .wiz-kit ol { margin:8px 0 0; padding-left:22px; font-size:13.5px; }
+  .wiz-kit li { margin:0 0 10px; }
+  .wiz-kit a { color:var(--accent); }
+  .wiz-kit pre { background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:10px 12px; margin:8px 0 0; font:12px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--text); white-space:pre-wrap; }
+  .texp-rename .tname { width:260px; flex:none; background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:4px 8px; color:var(--text); font:inherit; font-size:13px; }
+  .texp-grid { display:grid; grid-template-columns:160px 1fr; gap:10px 12px; align-items:start; }
+  .texp-grid > span:nth-child(odd) { padding-top:6px; }
+  .texp-grid .tk { color:var(--dim); }
+  .texp-grid input[type=text] { width:100%; padding:5px 8px; font-size:13px; }
+  .texp-done { display:flex; justify-content:flex-end; margin-top:12px; }
+  /* Search notes (enrichment) block inside an open table row */
+  .texp-enrich { margin-top:12px; border-top:1px solid var(--line); padding-top:10px; }
+  .texp-enrich textarea { width:100%; min-height:64px; font-size:12.5px; margin-top:6px; resize:vertical; }
+  /* Result rows from the fuzzy and semantic stages carry a small tag */
+  .row .tagv { font-size:10.5px; color:var(--dim); border:1px solid var(--line); border-radius:9px; padding:1px 7px; margin-left:8px; font-weight:400; white-space:nowrap; }
+  .row.best { border-color:var(--accent); background:rgba(217,164,65,.07); }
+  .row.best .bestlbl { font-size:10.5px; color:var(--accent); text-transform:uppercase; letter-spacing:.08em; font-weight:600; margin-bottom:2px; }
+  .simhead { font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:var(--dim); margin:26px 0 8px; padding-top:12px; border-top:1px dashed var(--line); }
+  .meta .think { color:var(--accent); }
+  /* Provider chips on the AI card, and the rows on the providers screen */
+  .provchip { display:inline-flex; align-items:center; gap:7px; border:1px solid var(--line); border-radius:9px; padding:6px 12px; font-size:13px; }
+  .provchip .dot { width:8px; height:8px; border-radius:50%; background:var(--line); }
+  .provchip.on .dot { background:var(--ok); }
+  .provchip.bad .dot { background:#d9534f; }
+  .provchip .st { color:var(--dim); font-size:12px; }
+  .prv { display:flex; gap:12px; align-items:flex-start; padding:14px 0; border-top:1px solid var(--line); }
+  .prv:first-child { border-top:0; }
+  .prv .sw { appearance:none; width:36px; height:20px; border-radius:10px; background:var(--line); position:relative; cursor:pointer; flex:none; margin-top:2px; transition:background .15s; }
+  .prv .sw::after { content:""; position:absolute; top:2px; left:2px; width:16px; height:16px; border-radius:50%; background:var(--text); transition:left .15s; }
+  .prv .sw:checked { background:var(--accent); }
+  .prv .sw:checked::after { left:18px; }
+  .prv .body { flex:1; min-width:0; }
+  .prv .nm { font-weight:600; font-size:13.5px; }
+  .prv .ds { color:var(--dim); font-size:12.5px; margin:2px 0 8px; }
+  .prv input[type=password] { max-width:420px; }
+  .prv .st { font-size:12px; margin-top:6px; min-height:14px; color:var(--dim); }
+  .prv .st.ok { color:var(--ok); } .prv .st.warn { color:var(--warn); }
+  /* Stage rows on the AI tab */
+  .stg { display:flex; gap:12px; align-items:flex-start; padding:12px 0; border-top:1px solid var(--line); }
+  .stg:first-of-type { border-top:0; }
+  .stg .sw { appearance:none; width:36px; height:20px; border-radius:10px; background:var(--line); position:relative; cursor:pointer; flex:none; margin-top:2px; transition:background .15s; }
+  .stg .sw::after { content:""; position:absolute; top:2px; left:2px; width:16px; height:16px; border-radius:50%; background:var(--text); transition:left .15s; }
+  .stg .sw:checked { background:var(--accent); }
+  .stg .sw:checked::after { left:18px; }
+  .stg .sw:disabled { opacity:.4; cursor:default; }
+  .stg .body { flex:1; min-width:0; }
+  .stg .nm { font-weight:600; font-size:13.5px; }
+  .stg .ds { color:var(--dim); font-size:12.5px; margin:2px 0 6px; }
+  .stg .ctl { display:flex; gap:10px; flex-wrap:wrap; align-items:center; font-size:12.5px; color:var(--dim); }
+  .stg .ctl select, .stg .ctl input[type=number] { width:auto; padding:4px 8px; font-size:12.5px; }
+  .stg .ctl input[type=number] { width:74px; }
+  .stg .st { font-size:12px; margin-top:6px; min-height:14px; }
+  .stg .st.ok { color:var(--ok); } .stg .st.warn { color:var(--warn); }
+  .flist { margin-top:12px; border:1px solid var(--line); border-radius:8px; background:var(--panel); max-height:min(46vh,440px); overflow-y:auto; }
+  .frw { display:flex; align-items:center; gap:10px; padding:5px 10px; border-bottom:1px solid var(--line); font-size:13px; color:var(--text); }
+  .frw:last-child { border-bottom:0; }
+  .frw.dim .fnm, .frw.dim .fty { color:var(--dim); }
+  .frw .fc { width:52px; flex:none; text-align:center; }
+  .frw .fc input { width:15px; height:15px; accent-color:var(--accent); margin:0; cursor:pointer; }
+  .frw .fnm { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .frw .fty { width:260px; flex:none; text-align:right; color:var(--dim); font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .frw.fhead { color:var(--dim); font-size:10.5px; font-weight:600; text-transform:uppercase; letter-spacing:.06em; position:sticky; top:0; background:var(--panel); }
+  /* Embed mode: a FileMaker card window shows results only. The query comes
+     in the URL from a script; the header, the field and the status bar go. */
+  /* A card window keeps the search field, with the words in it, so a
+     person can edit and go again (Matt, 2026-09-09). */
+  body.embed h1, body.embed .tag, body.embed #firstRun, body.embed .status { display:none; }
+  body.embed .wrap { padding:14px 16px 24px; }
+  /* The search field stays put; the results scroll under it. */
+  .searchbar { position:sticky; top:0; z-index:5; background:var(--bg); padding:6px 0 2px; }
+  body.embed .searchbar { padding-top:0; }
+  .themeopt { display:inline-flex; border:1px solid var(--line); border-radius:9px; overflow:hidden; }
+  .themeopt button { padding:7px 16px; border:0; cursor:pointer; font-size:13px; background:transparent; color:var(--text); }
+  .themeopt button.on { background:var(--accent); color:#1a1408; }
+  .helpbtn { background:none; border:1px solid var(--line); color:var(--dim); border-radius:50%; width:20px; height:20px; font-size:12px; line-height:1; cursor:pointer; padding:0; margin-left:8px; vertical-align:middle; }
+  .helpbtn:hover { border-color:var(--accent); color:var(--text); }
+  .help-body { font-size:13.5px; line-height:1.55; }
+  .help-body h4 { margin:14px 0 4px; font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:var(--dim); }
+  .help-body p { margin:0 0 8px; }
+  .pass { display:flex; gap:12px; align-items:center; padding:8px 0; border-top:1px solid var(--line); font-size:13px; flex-wrap:wrap; }
+  .pass:first-child { border-top:0; }
+  .pass .k { color:var(--dim); width:150px; flex:none; }
+  .ledger { font-size:12.5px; color:var(--dim); margin-top:8px; }
+  .ledger div { padding:2px 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Mitos <span class="thread">&#x2E31;&mdash;&#x2E31;</span></h1>
+  <p class="tag">The thread through your database. One field, any table, the right record.</p>
+  <div class="empty" id="firstRun" style="display:none">
+    <b>Nothing is indexed yet.</b> <span id="firstRunText">Connect your FileMaker server, pick the tables to search, and sync.</span>
+    <div class="btns"><button class="btn primary" id="firstRunSetup">Set up Mitos</button><button class="btn" id="firstRunSample" style="display:none">Try the sample data</button></div>
+  </div>
+
+  <div class="searchbar">
+  <input id="q" type="search" placeholder="Search" autofocus autocomplete="off">
+  <div class="meta" id="meta"></div>
+  </div>
+  <script>
+    // First paint, before the page's script arrives: a card window opened
+    // with ?q= says "searching..." at once instead of sitting blank.
+    (function () { try { if (/[?&]q=/.test(location.search)) document.getElementById("meta").textContent = "searching..."; } catch (e) {} })();
+  </script>
+  <div class="expanded" id="expanded"></div>
+  <div id="results"></div>
+</div>
+<!-- The search screen is minimal: one button to Settings, bottom left, and
+     the theme switch, bottom right. Counts and versions live in Settings. -->
+<div class="status">
+  <span class="statleft">
+    <button id="openSettings">&#9881; Settings</button>
+    <span id="statusText" style="display:none"></span>
+    <span id="buildVer" class="ver" style="display:none"></span>
+  </span>
+</div>
+
+<!-- Settings: three tabs plus the search log. Data Sources saves itself
+     (Connect persists the connection); Tables and AI save with the button. -->
+<div class="overlay" id="settings">
+  <div class="panel">
+    <div class="p-head"><strong>Settings</strong><span id="setSub" style="color:var(--dim);font-size:12.5px"></span></div>
+    <div class="tabs">
+      <button id="tabbtn-fm" type="button" class="on">Data Sources</button>
+      <button id="tabbtn-tables" type="button">Tables</button>
+      <button id="tabbtn-ai" type="button">AI</button>
+      <button id="tabbtn-log" type="button">Log</button>
+    </div>
+    <div class="p-list">
+
+      <div id="tab-fm">
+        <div class="card">
+          <h3>FileMaker server</h3>
+          <div id="fmView">
+            <div class="fmsum">
+              <span class="dot" id="fmDot"></span>
+              <span id="fmSummary" style="flex:1">Not connected yet</span>
+              <button class="btn" id="fmEditBtn" type="button">Edit</button>
+            </div>
+            <div class="set-row" id="structRow" style="display:none;margin-top:8px">
+              <span id="structInfo" style="color:var(--dim);font-size:12.5px"></span>
+              <span class="sp"></span>
+              <button class="btn" id="rescanBtn" type="button">&#8981; Rescan</button>
+            </div>
+          </div>
+          <div id="fmForm" style="display:none">
+            <p class="intro" style="margin:0 0 10px">Your server and login. Mitos can only see files this login can open over OData. The data stays on your server; Mitos keeps a copy of the chosen fields for search.</p>
+            <div class="field" style="margin-bottom:10px"><span>Server</span><input type="text" id="fmHost" placeholder="fms.example.com" autocomplete="off" spellcheck="false" autocapitalize="off"></div>
+            <div class="fmline">
+              <div class="field"><span>Username</span><input type="text" id="fmUser" autocomplete="off" spellcheck="false" autocapitalize="off"></div>
+              <div class="field"><span>Password <span style="font-weight:400;color:var(--dim)">(blank = keep current)</span></span><input type="password" id="fmPass" autocomplete="off" readonly></div>
+              <button class="btn primary" id="fmTestBtn" type="button">Connect</button>
+              <span id="fmTestStatus" style="color:var(--dim);font-size:12px;flex:1;min-width:140px"></span>
+              <button class="btn" id="fmCancelBtn" type="button">Cancel</button>
+            </div>
+            <input type="hidden" id="fmDb">
+            <div id="fmDbPicker" style="display:none;margin-top:12px;border-top:1px solid var(--line);padding-top:12px"></div>
+          </div>
+        </div>
+        <div id="scanGate" class="card scanhero" style="display:none">
+          <p>Connected. Scanning reads the tables and fields this login can see, so you can pick what Mitos searches. Nothing syncs until you choose tables.</p>
+          <button class="btn primary" id="scanBtn" type="button">Scan database</button>
+        </div>
+        <div class="card">
+          <h3>File structure <span class="hint">real names, keys and modification fields, straight from FileMaker</span></h3>
+          <p class="intro">Optional. OData cannot tell Mitos a table's real name, its primary key, its modification-timestamp field, or which calculations store their result. A <b>Save a Copy as XML</b> export can. In FileMaker: <b>File &#9656; Save a Copy As &#9656; XML</b>, then upload it here and rescan.</p>
+          <div class="set-row">
+            <button class="btn" id="saxBtn" type="button">&#8682; Upload SaXML file(s)</button>
+            <input type="file" id="saxFile" accept=".xml" multiple style="position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0">
+            <span class="sp"></span>
+            <button class="btn" id="saxClearBtn" type="button" style="display:none">Clear all</button>
+          </div>
+          <div id="saxProgress" style="margin-top:8px"></div>
+          <div id="saxStatus" class="note" style="margin-top:8px"></div>
+          <div id="saxTimes" class="note" style="margin-top:4px"></div>
+          <div id="saxFiles" style="margin-top:8px"></div>
+        </div>
+        <div class="card">
+          <h3>Search settings</h3>
+          <div class="set-row">
+            <span style="font-size:13px">Dates typed in the search field are read as</span>
+            <select id="dateFormat" title="How a typed date is read when both parts fit a month">
+              <option value="mdy">month/day/year</option>
+              <option value="dmy">day/month/year</option>
+            </select>
+          </div>
+        </div>
+        <div class="card">
+          <h3>This server <span class="hint">where Mitos itself runs</span></h3>
+          <p class="intro">No hosting credential is stored in the app; that stays with whoever deploys it. AI keys and the FileMaker login live on this server's volume, behind the site password.</p>
+          <div class="kv"><span class="k">Index</span><span id="srvIndex">&ndash;</span></div>
+          <div class="kv"><span class="k">Last build</span><span id="srvBuilt">&ndash;</span></div>
+        </div>
+      </div>
+
+      <div id="tab-tables" style="display:none">
+        <div class="note" id="nameBanner" style="display:none;border:1px solid var(--line);border-radius:10px;padding:10px 14px;margin:12px 0;font-size:13px"></div>
+        <div class="card" id="scanFirstNote" style="display:none">
+          <p class="intro" style="margin:0">Nothing scanned yet. Connect and scan on the <b>Data Sources</b> tab, then pick tables here. <button class="btn" type="button" id="goDataSources" style="margin-left:8px">Go to Data Sources</button></p>
+        </div>
+        <div class="card" id="cardTables">
+          <div class="tblbar">
+            <h3 style="margin:0">Tables <span class="hint">check to index &middot; uncheck to remove</span></h3>
+            <span class="grow"></span>
+            <span class="note" id="lastSync"></span>
+            <select id="syncEvery">
+              <option value="0">Auto-sync off</option>
+              <option value="60">Hourly</option>
+              <option value="360">Every 6 hours</option>
+              <option value="1440">Daily</option>
+            </select>
+            <button class="btn" id="syncBtn">&#8635; Sync now</button>
+          </div>
+          <div class="note" id="tblNote"></div>
+          <div id="tblHead" style="display:none;gap:14px;padding:4px 2px 2px"><button class="link" id="tblSelAll" type="button">Select all</button><button class="link" id="tblSelNone" type="button">Deselect all</button></div>
+          <div id="tblList"></div>
+        </div>
+      </div>
+
+      <div id="tab-ai" style="display:none">
+        <div id="keyStepNote" class="card" style="display:none">
+          <strong>Connection saved.</strong> One more thing: your AI key. It names your tables, so the first scan comes out with Organization instead of D_Org~B. Until a key is set, names are guessed.
+          <div class="btns"><button class="btn primary" id="keyStepContinue" type="button">Continue to scan &rarr;</button>
+          <button class="link" id="keyStepSkip" type="button" style="margin-left:10px">Skip for now</button></div>
+        </div>
+        <div class="card">
+          <h3>Appearance</h3>
+          <div class="set-row" style="gap:12px"><span class="note" style="min-height:0">Light or dark</span>
+            <div class="themeopt" id="themeOpt"><button type="button" data-theme="system">System</button><button type="button" data-theme="light">Light</button><button type="button" data-theme="dark">Dark</button></div>
+          </div>
+        </div>
+        <div class="card">
+          <h3>AI providers <span class="hint">the accounts Mitos may call</span></h3>
+          <!-- Any number of providers can be configured at once. The card
+               shows which are; keys and switches live behind Edit, on a
+               screen with room for one row per provider. -->
+          <div class="field" style="margin-bottom:12px"><span>Providers</span>
+            <div class="set-row" style="gap:8px">
+              <div id="provSummary" style="display:flex;gap:8px;flex-wrap:wrap"></div>
+              <button class="btn" id="provEdit" type="button">Edit</button>
+            </div>
+          </div>
+          <div class="field" style="margin-bottom:2px" id="namingField"><span>Model that names your tables at scan time</span>
+            <select id="namingModelSel" style="width:auto"></select>
+          </div>
+        </div>
+        <div class="card">
+          <h3>Search stages <span class="hint">each one is its own switch; the exact search never waits for them</span></h3>
+          <p class="intro">Exact, type-aware search always runs first and shows at once. These add to it, one at a time, and each can be switched off when it misbehaves. A switch saves itself.</p>
+          <div id="stageList"></div>
+        </div>
+        <div class="card">
+          <h3>Paid passes <span class="hint">what a Run would do now, and what has run</span></h3>
+          <div id="passList"></div>
+        </div>
+        <div class="note" id="aiVersion" style="text-align:right;font-size:11.5px;padding:2px 4px 8px;min-height:0"></div>
+      </div>
+
+      <div id="tab-log" style="display:none">
+        <div class="card">
+          <h3>Searches <span class="hint">every search and click on this box, newest first</span></h3>
+          <p class="intro">A search with no click is the interesting one: either nothing matched, or the right record was not recognisable in the list.</p>
+          <div class="btns"><button class="btn" id="logRefresh">Refresh</button><span class="note" id="logTotals"></span></div>
+          <div id="logRows" style="margin-top:10px"></div>
+        </div>
+      </div>
+    </div>
+    <div class="p-foot">
+      <span class="note" id="saveNote"></span>
+      <span class="sp"></span>
+      <button class="btn" id="closeSettings">Close</button>
+      <button class="btn primary" id="saveAll">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- The setup wizard: first run only. Eight steps, one screen each. It sits
+     BEFORE the scan and sync overlays so those paint on top of it. -->
+<div class="overlay" id="wizOverlay">
+  <div class="panel">
+    <div class="p-head"><strong>Set up Mitos</strong><span id="wizHeadSub" style="color:var(--dim);font-size:12.5px"></span></div>
+    <div class="wiz-rail" id="wizRail"></div>
+    <div class="p-list" style="padding:0">
+      <div class="wiz-body" data-wstep="1">
+        <p class="wiz-why">Mitos reads your FileMaker data through the server&rsquo;s OData API. It never writes to your file.</p>
+        <div class="wiz-pre">
+          <div><b>Before you start</b>, in the FileMaker Server Admin Console:</div>
+          <div>1. Turn on <b>OData</b> (Connectors).</div>
+          <div>2. Use an account whose privilege set has the <b>fmodata</b> extended privilege in each file to search.</div>
+          <div>3. That is everything Mitos needs from the file: no layouts, no scripts, no plugin.</div>
+        </div>
+        <div class="field" style="margin-bottom:10px"><span>Server address</span><input type="text" id="wizHost" placeholder="fms.example.com" autocomplete="off" spellcheck="false" autocapitalize="off"></div>
+        <div class="fmline">
+          <div class="field"><span>Username</span><input type="text" id="wizUser" autocomplete="off" spellcheck="false" autocapitalize="off"></div>
+          <div class="field"><span>Password</span><input type="password" id="wizPass" autocomplete="off" readonly></div>
+        </div>
+        <div class="note" style="margin-top:8px;font-size:11.5px">Before this works your FileMaker Server needs OData and the Data API on, and the account needs the fmodata and fmrest privileges.</div>
+        <div class="wiz-ok" id="wizConnOk"></div>
+        <div class="wiz-err" id="wizConnErr"></div>
+      </div>
+      <div class="wiz-body" data-wstep="2" style="display:none">
+        <p class="wiz-why">These are the files this login can open over OData. Pick the ones Mitos should search. A file that is not listed needs the <b>fmodata</b> extended privilege for this account.</p>
+        <div id="wizDbPicker"></div>
+        <div class="wiz-ok" id="wizFilesOk"></div>
+        <div class="wiz-err" id="wizFilesErr"></div>
+      </div>
+      <div class="wiz-body" data-wstep="3" style="display:none">
+        <p class="wiz-why">Mitos uses your own AI account for one job: naming your tables and picking the field that names a record. Search itself makes no AI call. The key is stored on your server, and you can change it any time in Settings.</p>
+        <div class="set-row" style="gap:16px;align-items:flex-end;margin-bottom:4px">
+          <div>
+            <div style="font-size:12.5px;color:var(--dim);margin-bottom:5px">Provider</div>
+            <div style="display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden">
+              <button type="button" class="wizprov on" data-prov="anthropic">Claude</button>
+              <button type="button" class="wizprov" data-prov="openai">OpenAI</button>
+            </div>
+          </div>
+          <div class="field" style="margin:0;flex:1;min-width:180px"><span>Model</span><select id="wizModel" style="width:100%"></select></div>
+        </div>
+        <div class="field" style="margin-top:12px"><span id="wizKeyLabel">Anthropic API key</span><input type="password" id="wizKey" placeholder="paste it here, it is checked for you" autocomplete="off" spellcheck="false"></div>
+        <div class="wiz-ok" id="wizKeyOk"></div>
+        <div class="wiz-err" id="wizKeyErr"></div>
+      </div>
+      <div class="wiz-body" data-wstep="4" style="display:none">
+        <p class="wiz-why">Mitos reads the structure of the chosen files: which tables exist, their fields, and how many records each holds. No data is copied in this step.</p>
+        <div class="wiz-ok" id="wizScanOk"></div>
+        <div class="wiz-err" id="wizScanErr"></div>
+        <details style="margin-top:16px">
+          <summary style="cursor:pointer;color:var(--dim);font-size:12.5px">Improve the scan with a Save a Copy as XML file (optional)</summary>
+          <p class="intro" style="margin:9px 0 0;line-height:1.6">OData cannot tell Mitos a table&rsquo;s real name, its primary key, its modification-timestamp field, or which calculations are stored. A <b>File &#9656; Save a Copy As &#9656; XML</b> export can. Add one now, or later in Settings.</p>
+          <button class="btn" id="wizSax" type="button" style="margin-top:9px">&#8682; Upload SaXML file(s)</button>
+          <div id="wizSaxNote" class="note" style="margin-top:6px"></div>
+        </details>
+      </div>
+      <div class="wiz-body" data-wstep="5" style="display:none">
+        <p class="wiz-why">These are the tables Mitos can search. Tables worth searching are checked; uncheck anything you do not need. The fields each table searches can be adjusted later in Settings.</p>
+        <div style="display:flex;gap:14px;margin-bottom:6px"><button class="link" id="wizSelAll" type="button">Select all</button><button class="link" id="wizSelNone" type="button">Deselect all</button></div>
+        <div class="wiz-list" id="wizTables"></div>
+        <div class="note" style="margin-top:10px" id="wizPickSum"></div>
+      </div>
+      <div class="wiz-body" data-wstep="6" style="display:none">
+        <p class="wiz-why">Exact, type-aware search always runs. These stages add to it, one at a time. Each one is its own switch, and a switch saves itself. You can change them later on the AI tab in Settings.</p>
+        <div id="wizStages"></div>
+      </div>
+      <div class="wiz-body" data-wstep="7" style="display:none">
+        <p class="wiz-why">Mitos now copies the chosen fields of those tables into its search index. Your FileMaker data is not changed.</p>
+        <div class="wiz-pre" id="wizPlan"></div>
+      </div>
+      <div class="wiz-body" data-wstep="8" style="display:none">
+        <div class="card wiz-kit" style="margin-bottom:10px">
+          <p class="intro" style="margin:0;color:var(--text);font-size:14px"><b>Last step:</b> copy the Mitos scripts into your solution.</p>
+          <ol>
+            <li><a href="/api/kit/beacon.xml" download="Mitos Beacon.xmss.xml">Download the beacon script</a> and paste it into Script Workspace. The paste needs the MBS plug-in or another clipboard tool that puts script XML on the clipboard. Without one, build the two steps by hand from the outline below.</li>
+            <li>The outline of the beacon:
+<pre>OnWindowTransaction trigger on the file, set to "Mitos Beacon"
+
+Script "Mitos Beacon"
+  Perform Script on Server [ "Mitos Beacon Post" ;
+    Parameter: Get ( ScriptParameter ) ]   # the transaction JSON
+
+Script "Mitos Beacon Post"
+  Insert from URL [ <span class="wiz-kit-url"></span>/api/records/changed?key=&lt;your site password&gt; ;
+    cURL: -X POST -H "Content-Type: application/json"
+          -d @$json ]                       # the JSON from the parameter</pre>
+            </li>
+            <li class="note" style="font-size:12.5px;min-height:0">Install video: coming.</li>
+          </ol>
+        </div>
+      </div>
+    </div>
+    <div class="p-foot">
+      <button class="btn" id="wizLater" type="button">Finish later</button>
+      <button class="btn" id="wizBack" type="button" style="display:none">&larr; Back</button>
+      <span class="sp"></span>
+      <button class="btn" id="wizSkipKey" type="button" style="display:none">Skip for now</button>
+      <button class="btn primary" id="wizAct" type="button">Connect</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="scanOverlay">
+  <div class="panel">
+    <div class="p-head"><strong>Scanning your database</strong></div>
+    <div class="sync-overall" id="scanPulseTrack" style="margin:10px 18px 0"><div class="pulse" id="scanPulse" style="width:100%"></div></div>
+    <div class="p-list" style="padding:12px 18px"><div id="scanLog"></div></div>
+    <div class="p-foot"><span class="sp"></span><button class="btn" id="scanClose">Close</button></div>
+  </div>
+</div>
+
+<!-- Sync is a MODAL: the job runs on the server; this window only watches it.
+     Cancel asks the server to stop now. Closing this window does not. -->
+<div class="overlay" id="syncOverlay">
+  <div class="panel">
+    <div class="p-head" style="justify-content:flex-start;align-items:center">
+      <span class="spin" id="syncSpin"></span>
+      <strong id="syncTitle" style="display:none"></strong>
+      <span id="syncSub" style="margin-left:0"></span><span class="ell" id="syncEll"></span>
+    </div>
+    <div class="p-list" style="padding:12px 18px;overflow-y:auto">
+      <div class="sync-overall"><div id="syncOverall"></div></div>
+      <div class="sync-now" id="syncNow">
+        <div class="sn-top"><span class="sn-tbl" id="syncNowTable"></span><span class="sn-st" id="syncNowStatus"></span><span class="sn-prog" id="syncNowProg"></span></div>
+        <span class="sn-line" id="syncNowLine"></span>
+      </div>
+      <div id="syncTables"></div>
+      <div class="sync-logtog" id="syncLogToggle"><span class="dt">&#9656;</span> Activity log</div>
+      <div id="syncLog" style="display:none"></div>
+    </div>
+    <div class="p-foot">
+      <div id="syncActions" style="display:none;gap:8px">
+        <button class="btn" id="syncRetry">Try again</button>
+        <button class="btn" id="syncToSettings">Open Settings</button>
+      </div>
+      <span class="sp"></span>
+      <button class="btn" id="syncCancel">Cancel sync</button>
+      <button class="btn primary" id="syncDone" style="display:none">Done</button>
+    </div>
+  </div>
+</div>
+
+<!-- What is about to happen, BEFORE it happens. -->
+<!-- AI providers: one row each, with room. A key is tested the moment it
+     is entered and saved when it works; the switch keeps the key but takes
+     the provider out of every list. -->
+<div class="overlay" id="provOverlay">
+  <div class="panel" style="width:min(720px,94vw)">
+    <div class="p-head"><strong>AI providers</strong><span class="note">a key is tested and saved as you enter it</span></div>
+    <div class="p-list" id="provRows" style="padding:4px 18px 12px"></div>
+    <div class="p-foot"><span class="note" id="provNote"></span><span class="sp"></span><button class="btn primary" id="provDone">Done</button></div>
+  </div>
+</div>
+
+<div class="overlay" id="syncConfirmOverlay">
+  <div class="panel" style="width:clamp(460px,38vw,760px);max-width:96vw;max-height:calc(100vh - 56px)">
+    <div class="p-head"><strong>Ready to sync</strong></div>
+    <div class="p-list" style="padding:12px 18px;font-size:13.5px" id="syncConfirmBody"></div>
+    <div class="p-foot"><span class="sp"></span><button class="btn" id="syncConfirmCancel">Cancel</button><button class="btn" id="syncConfirmLater" style="display:none">Later</button><button class="btn primary" id="syncConfirmGo">Start sync</button></div>
+  </div>
+</div>
+
+<!-- A sync that took Mitos down: the server's report, once, with Try again. -->
+<div class="overlay" id="crashOverlay">
+  <div class="panel" style="width:min(560px,94vw)">
+    <div class="p-head"><strong>Mitos stopped during the sync</strong></div>
+    <div class="p-list" id="crashBody" style="padding:14px 18px 16px;font-size:13.5px;line-height:1.55"></div>
+    <div class="p-foot"><span class="sp"></span><button class="btn" id="crashClose">Close</button><button class="btn primary" id="crashRetry">Try again</button></div>
+  </div>
+</div>
+
+<!-- Help: what a stage or a setting does, in full. -->
+<div class="overlay" id="helpOverlay">
+  <div class="panel" style="width:min(640px,94vw)">
+    <div class="p-head"><strong id="helpTitle">Help</strong></div>
+    <div class="p-list help-body" id="helpBody" style="padding:6px 18px 16px"></div>
+    <div class="p-foot"><span class="sp"></span><button class="btn primary" id="helpDone">Done</button></div>
+  </div>
+</div>
+
+<!-- Enrichment: switching it on is a formal step. Model, rules, tables, a
+     live preview, the price, then Run now or Later. -->
+<div class="overlay" id="enrichOverlay">
+  <div class="panel" style="width:min(820px,94vw)">
+    <div class="p-head"><strong>Enrichment</strong><span class="note">a fast model writes search notes for each record, once</span></div>
+    <div class="p-list" style="padding:8px 18px 14px">
+      <div class="frow">
+        <div class="field" style="margin-bottom:10px;min-width:260px"><span>Model</span><select id="enModel" style="width:auto"></select></div>
+      </div>
+      <div class="field" style="margin-bottom:10px"><span>Rules for the notes</span><textarea id="enPrompt" rows="4" spellcheck="false" style="font-size:13px"></textarea>
+        <span class="note">One rule set for every table in this version. The output rules (plain text, nothing invented) are added for you.</span></div>
+      <div class="field" style="margin-bottom:10px"><span>Tables</span><div id="enTables"></div></div>
+      <div class="btns" style="margin-top:4px"><button class="btn" id="enPreviewBtn" type="button">Preview on two records per table</button><span class="note" id="enEstimate"></span></div>
+      <div id="enPreview" style="margin-top:8px"></div>
+    </div>
+    <div class="p-foot"><span class="note">Later switches it on and writes up to 1,000 notes per sync; Run now writes them all.</span><span class="sp"></span><button class="btn" id="enCancel">Cancel</button><button class="btn" id="enLater">Later</button><button class="btn primary" id="enRun">Run now</button></div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
