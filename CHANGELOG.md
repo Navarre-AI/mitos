@@ -2,6 +2,10 @@
 
 Newest first. The commit log has the detail; this is the story.
 
+## 0.9.1, 2026-09-10
+
+- No model call while a person types. The exact search follows every keystroke; the AI phase (Enhanced search, Semantic search, Pick the best) waits for Return, and the results line says so.
+
 ## 0.9.0, 2026-09-09
 
 - Deterministic, type-aware search: the whole input is read as one kind (words, number, range, date, date range, month, email, phone) and only the fields that can hold that kind are searched. Every hit carries a reason in words. Results are balanced across tables.
