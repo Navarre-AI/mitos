@@ -13,7 +13,7 @@ import { fmConfigured, fetchSchema, fetchRowsByKeys, fmReason } from "./fm.js";
 import {
   sql, syncTables, loadSampleData, sampleAvailable, sampleUpdatedAt, storeManifest,
   ensureIndexTable, indexHashes, upsertIndexRows, deleteIndexRows, indexStats, normalizeText,
-  upsertShadowRows, deleteShadowRows, passEstimate,
+  upsertShadowRows, deleteShadowRows, passEstimate, buildTextIndex,
 } from "./store.js";
 import { DEFAULT_TABLES } from "./tables.config.js";
 import { parseNumber, parseDate } from "./query.js";
@@ -201,6 +201,14 @@ async function doBuild(emit, shouldStop = () => false, expected = {}, full = fal
   for (const table of names) {
     if (shouldStop()) { onEvent({ type: "cancelled", at: table }); break; }
     await indexOneTable(table, cfg[table], onEvent, summary);
+  }
+  // The full-text index over what was just written. A box without the fts
+  // extension keeps searching by the field rules alone and says so.
+  {
+    const tT = Date.now();
+    onEvent({ type: "phase", phase: "textindex" });
+    try { await buildTextIndex(); onEvent({ type: "note", note: `Text index (BM25) built in ${((Date.now() - tT) / 1000).toFixed(1)}s` }); }
+    catch (e) { onEvent({ type: "note", note: `Text index not built (search runs on the field rules alone): ${String(e.message).slice(0, 120)}` }); }
   }
   const stageSummary = await runStages({ cfg, labels, onEvent, shouldStop, full });
 

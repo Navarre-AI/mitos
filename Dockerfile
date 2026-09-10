@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl unzip ca-c
  && curl -L -o /tmp/duckdb.zip "https://github.com/duckdb/duckdb/releases/download/v1.5.3/duckdb_cli-linux-${ARCH}.zip" \
  && unzip /tmp/duckdb.zip -d /usr/local/bin \
  && chmod +x /usr/local/bin/duckdb \
+ && duckdb -c "INSTALL fts" \
  && rm /tmp/duckdb.zip \
  && apt-get purge -y unzip && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
 

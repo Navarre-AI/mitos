@@ -2,6 +2,11 @@
 
 Newest first. The commit log has the detail; this is the story.
 
+## 0.9.3, 2026-09-10 (on the release box first)
+
+- BM25: a full-text index over titles, search text and notes, built at the end of every sync (DuckDB's fts extension, baked into the image). The exact phase still finds candidates by prefix, so "nav" still finds Navarre; BM25 weighs them by term rarity and length.
+- Reciprocal rank fusion replaces the fixed rank bands when exact, close-spelling and semantic lists merge. Weighted, so an exact hit still outranks a look-alike.
+
 ## 0.9.2, 2026-09-10
 
 - The sync log says how it read: fields by $select or whole rows, the page size, the watermark of an incremental pull, the resume row after a crash.

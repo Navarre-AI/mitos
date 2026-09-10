@@ -74,13 +74,13 @@ function runDuckDB(query, allowWrite, dbPath = DB_PATH, safe = true) {
   });
 }
 
-export function sql(query, { allowWrite = false } = {}) {
+export function sql(query, { allowWrite = false, safe = true } = {}) {
   if (!allowWrite && !/^\s*(select|with|pragma|describe|summarize)\b/i.test(query)) {
     return Promise.reject(new Error("Only SELECT/WITH queries are allowed here."));
   }
   const attempt = async () => {
     for (let i = 0; ; i++) {
-      try { return await runDuckDB(query, allowWrite); }
+      try { return await runDuckDB(query, allowWrite, DB_PATH, safe); }
       catch (e) {
         // A write (a sync, a vector pass) holds the file. A write waits its
         // turn for up to 10 s; a read on the search path gives up after 3 s,
@@ -468,7 +468,34 @@ const INDEX_COLUMNS = {
 // vectors inside the index file took it from 83 MB to 645 MB, which broke
 // the page cache for the exact search. In their own file a change of size
 // is a file delete. vec_key is provider/model/size, see embed.js.
-const STAGE_COLUMNS = { enrich_text: "VARCHAR", enrich_norm: "VARCHAR", enrich_key: "VARCHAR" };
+const STAGE_COLUMNS = { enrich_text: "VARCHAR", enrich_norm: "VARCHAR", enrich_key: "VARCHAR",
+  // The full-text index needs one id column: src_table|record_id, filled
+  // when the index is built (a changed row comes back with it NULL).
+  doc_key: "VARCHAR" };
+
+// --- The full-text index (BM25) ---------------------------------------------
+// DuckDB's fts extension builds an inverted index over the title, the search
+// text and the notes, and scores a query with BM25: a rare word outranks a
+// common one, and a word in a short title outranks the same word in a long
+// paragraph. Built at the end of every sync (seconds on 95,000 rows). The
+// extension is baked into the image (Dockerfile); the read path that uses it
+// runs without -safe, because safe mode refuses to load extensions.
+let ftsKnown = null;
+export async function buildTextIndex() {
+  await sql(`UPDATE mitos_index SET doc_key = src_table || '|' || record_id WHERE doc_key IS NULL`, { allowWrite: true });
+  await sql(
+    `PRAGMA create_fts_index('mitos_index', 'doc_key', 'title_text', 'search_text', 'enrich_norm', stemmer='none', stopwords='none', lower=1, strip_accents=1, overwrite=1)`,
+    { allowWrite: true, safe: false }
+  );
+  ftsKnown = true;
+}
+export async function textIndexReady() {
+  if (ftsKnown !== null) return ftsKnown;
+  const r = await sql(`SELECT 1 AS ok FROM information_schema.schemata WHERE schema_name = 'fts_main_mitos_index'`).catch(() => []);
+  ftsKnown = r.length > 0;
+  return ftsKnown;
+}
+export function forgetTextIndex() { ftsKnown = null; }
 const VEC_DDL = (dims) => `CREATE TABLE IF NOT EXISTS mitos_vec (src_table VARCHAR, record_id VARCHAR, vec_key VARCHAR, vec FLOAT[${Number(dims)}])`;
 
 export async function ensureIndexTable() {
@@ -740,13 +767,21 @@ function termSql(t, enrichTables) {
 const tableFilter = (tables) => tables && tables.length ? ` AND src_table IN (${tables.map((n) => `'${esc(n)}'`).join(",")})` : "";
 
 export async function textSearch(plan, { perTable = 5, tables, enrichTables = null } = {}) {
-  let where, score, hits = "NULL", order = "";
+  let where, score, hits = "NULL", order = "", safe = true;
   switch (plan.kind) {
     case "text": {
       const parts = plan.terms.map((t) => termSql(t, enrichTables));
       where = parts.map((p) => p.where).join(" AND ");
       const phrase = like(plan.terms.map((t) => t.word).join(" "));
       score = parts.map((p) => p.score).join(" + ") + ` + (CASE WHEN ${L("title_text", ` ${phrase}%`)} THEN 4 ELSE 0 END)`;
+      // BM25 on top of the field rules: the candidates still come from the
+      // prefix scan (so "nav" finds Navarre, which BM25 alone cannot), and
+      // the full-text index weighs them by term rarity and document length.
+      if (await textIndexReady()) {
+        const words = plan.terms.map((t) => t.word).join(" ");
+        score += ` + 2 * coalesce(fts_main_mitos_index.match_bm25(doc_key, '${esc(words)}'), 0)`;
+        safe = false;
+      }
       break;
     }
     case "number": {
@@ -816,7 +851,8 @@ export async function textSearch(plan, { perTable = 5, tables, enrichTables = nu
      FROM mitos_index
      WHERE (${where})${tableFilter(tables)}
      QUALIFY row_number() OVER (PARTITION BY src_table ORDER BY score DESC, ${order}length(title_text), record_id) <= ${Number(perTable)}
-     ORDER BY src_table, score DESC, ${order}length(title_text), record_id`
+     ORDER BY src_table, score DESC, ${order}length(title_text), record_id`,
+    { safe }
   );
 }
 
