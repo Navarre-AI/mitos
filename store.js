@@ -224,10 +224,12 @@ async function syncTable(table, { onProgress, onNote, onResumed, watermark, sele
     // two re-reads one page, never skips one.
     fs.writeFileSync(checkpointFor(name), JSON.stringify({ skip: skip + page.length, size, filter, watermark: wm, rows: count, maxMod, at: new Date().toISOString() }));
   };
+  const pullStats = {};
+  const resumedFrom = ckpt && !ckpt.done ? Number(ckpt.skip) || null : null;
   if (fd !== null) {
     try {
       await fetchAllRows(table.occurrences[0], names, {
-        db: table.db, onProgress, onNote, onPage, select: names, shouldStop,
+        db: table.db, onProgress, onNote, onPage, select: names, shouldStop, stats: pullStats,
         startSkip: ckpt ? Number(ckpt.skip) : 0,
         // No $orderby: FileMaker sorts the whole table for every $skip page,
         // which took a 68,777-row pull from a minute to over twenty (2026-09-09).
@@ -293,7 +295,15 @@ async function syncTable(table, { onProgress, onNote, onResumed, watermark, sele
   // their work, and a big table's file is not left on a small disk.
   dropPull(name);
   const total = (await sql(`SELECT count(*) c FROM ${q(name)}`))[0]?.c ?? count;
-  return { name, db: table.db, rows: total, changed: count, removed, mode: incremental ? "incremental" : "full", watermark: newWatermark, columns: names };
+  // The method in words, for the log line: "over OData, 9 fields by
+  // $select, 1,000 a page" or "over OData, whole rows (the field list was
+  // refused)". Empty when nothing was read (an incremental pull with no
+  // changes still made one request, so the stats are there).
+  const method = pullStats.pageSize
+    ? `over OData, ${pullStats.wholeRows ? "whole rows (the field list was refused)" : `${pullStats.fields} fields by $select`}, ${Number(pullStats.pageSize).toLocaleString()} a page`
+    : "over OData";
+  return { name, db: table.db, rows: total, changed: count, removed, mode: incremental ? "incremental" : "full", watermark: newWatermark, columns: names,
+    method, since: incremental ? wm : null, resumedFrom };
 }
 
 // The per-record beacon's write: a few rows replaced in the local copy by
@@ -357,8 +367,9 @@ export async function syncTables(tables, names, log = () => {}, onEvent = () => 
       }
       throw e;
     }
-    log(`  ${t.name}: ${r.mode} / ${r.changed} changed / ${r.removed || 0} removed / ${r.rows} total`);
-    onEvent({ type: "pull-done", name: t.name, rows: r.rows, changed: r.changed, removed: r.removed || 0, mode: r.mode, ms: Date.now() - started });
+    log(`  ${t.name}: ${r.mode} ${r.method}${r.since ? ` since ${r.since}` : ""}${r.resumedFrom ? ` resumed at row ${r.resumedFrom}` : ""} / ${r.changed} changed / ${r.removed || 0} removed / ${r.rows} total`);
+    onEvent({ type: "pull-done", name: t.name, rows: r.rows, changed: r.changed, removed: r.removed || 0, mode: r.mode, ms: Date.now() - started,
+      method: r.method, since: r.since || null, resumedFrom: r.resumedFrom || null });
     results.push(r);
   }
   const manifest = storeManifest();

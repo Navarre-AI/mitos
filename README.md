@@ -158,8 +158,8 @@ paste it; it names your tables), **Scan** (reads tables, fields and record
 counts, with progress you can watch; no data is copied), **Tables** (the
 ones worth searching are pre-checked; Select all and Deselect all), **AI
 stages** (the five switches, before any sync), **Sync**, then **Add to your
-file** (the beacon script and the outline). The same steps live in Settings
-afterwards.
+file** (the kit file and the page that walks the FileMaker side). The same
+steps live in Settings afterwards.
 
 The scan runs on the server and reports progress; the window polls it, so a
 slow FileMaker Server never leaves a blank screen. For each table Mitos
@@ -204,8 +204,9 @@ the copy and the index.
 - `GET /api/index/sample?n=20&table=` returns random indexed rows.
 - `POST /api/records/changed` with `{ tables: { "<raw name>": { changed:
   [ids], deleted: [ids] } } }` pulls those records by primary key, indexes
-  them and runs the stages on them (the FileMaker OnWindowTransaction
-  beacon, see `filemaker/README.md`). 202 while a sync runs.
+  them and runs the stages on them. Not used in 1.0, where records update
+  on the timed sync; kept for a later record-by-record path. 202 while a
+  sync runs.
 - `POST /api/index/sync` with `{ full: true }` runs the paid passes without
   their per-sync caps. `GET /api/ai/estimate` says what a Run would do and
   cost, and lists past passes. `POST /api/ai/enrich-preview` writes sample

@@ -2,6 +2,14 @@
 
 Newest first. The commit log has the detail; this is the story.
 
+## 0.9.2, 2026-09-10
+
+- The sync log says how it read: fields by $select or whole rows, the page size, the watermark of an incremental pull, the resume row after a crash.
+- Enrichment sits above Semantic search everywhere the stages are listed: the cheaper, deterministic one first.
+- Every model picker has Other..., a typed model id, and the wizard's picker is the live list from the provider.
+- The setup step is called API key, and its text no longer claims search makes no AI call.
+- The beacon leaves 1.0. Records update on the timed sync; the record-by-record route stays in the code for later.
+
 ## 0.9.1, 2026-09-10
 
 - No model call while a person types. The exact search follows every keystroke; the AI phase (Enhanced search, Semantic search, Pick the best) waits for Return, and the results line says so.

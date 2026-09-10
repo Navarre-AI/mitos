@@ -139,7 +139,7 @@ web viewer or `Insert from URL` with `?key=<password>`.
 | `POST /api/index/cancel` | Stop the running job. A table is kept whole or not at all. |
 | `GET /api/index/status` | Counts, version, manifest, last crash. |
 | `POST /api/index/crash/ack` | Clear the crash report. |
-| `POST /api/records/changed` | The FileMaker beacon: `{ tables: { "<raw>": { changed: [ids], deleted: [ids] } } }`. 202 while a sync runs. |
+| `POST /api/records/changed` | Record-by-record refresh (not used in 1.0; records update on the timed sync): `{ tables: { "<raw>": { changed: [ids], deleted: [ids] } } }`. 202 while a sync runs. |
 | `GET /api/config` / `POST /api/config` | Read or save the connection, table choice, display names, table words, sync interval, date format, AI keys and stage switches. A new login is tested before it is saved. |
 | `POST /api/fm/test` | Test a connection without saving it. |
 | `GET /api/fm/tables` | The cached scan, or `{ building: true }`. `?refresh=1` rescans; `?rename=1` re-runs the naming pass. |
@@ -152,7 +152,6 @@ web viewer or `Insert from URL` with `?key=<password>`.
 | `GET /api/ai/estimate` | What a paid Run would do and cost, plus the ledger of past passes. |
 | `POST /api/ai/enrich-preview` | Sample search notes for a few records, nothing saved. |
 | `POST /api/ai/enrich/forget` | Delete a table's search notes on purpose. |
-| `GET /api/kit/beacon.xml` | The FileMaker beacon script as XML. |
 | `POST /api/click` | Record which result a person clicked. |
 | `GET /api/log?limit=` | Recent searches paired with their clicks. |
 
@@ -182,7 +181,7 @@ carries `why` (words) and `via` (exact, fuzzy, semantic).
 | `saxml.js` | Reader for a Save a Copy as XML export. Hints only. |
 | `env.js` | `.env` loader with override semantics. |
 | `public/index.html`, `public/app.js` | The whole UI: search, the card window (`?embed=1`), Settings (`?settings=1`), the wizard, the sync overlay. |
-| `filemaker/` | The FileMaker side: the beacon and go-to-record scripts, `cMitosJSON.md`. |
+| `filemaker/` | The FileMaker side: the kit file, the search and go-to-record scripts, `cMitosJSON.md`. |
 | `scripts/` | `eval.mjs`, `simulate.mjs`, `check-order.mjs`, `fetch-duckdb.mjs`. |
 | `eval/` | `cases.json`, its readable twin, and simulator reports. |
 | `sample-data/` | The fictional CSVs. |

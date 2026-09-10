@@ -1283,14 +1283,6 @@ app.post("/api/ai/enrich/forget", async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// The kit: the FileMaker script a person pastes into their file. Served as
-// XML so a browser offers it as a file, and a Web Viewer can read it.
-app.get("/api/kit/beacon.xml", (_req, res) => {
-  const file = path.join(__dirname, "filemaker", "Mitos Beacon.xmss.xml");
-  if (!fs.existsSync(file)) return res.status(404).json({ error: "The Mitos Beacon script is not part of this build." });
-  res.type("text/xml").sendFile(file);
-});
-
 // The enrichment window's preview: notes for two sample records per table,
 // with the prompt as typed, nothing saved. Costs a few cents.
 app.post("/api/ai/enrich-preview", async (req, res) => {

@@ -261,10 +261,11 @@ the kit. Fill in one branch per searched table in `Mitos - Go To Record`:
 the table word, the layout, the primary key field. Steps in
 `filemaker/README.md`.
 
-## The beacon answers 202
+## `POST /api/records/changed` answers 202
 
-**Cause.** `POST /api/records/changed` arrived while a sync was running.
-Mitos does not index single records during a sync.
+**Cause.** The request arrived while a sync was running. Mitos does not
+index single records during a sync. (Not used in 1.0; records update on the
+timed sync.)
 
 **Fix.** Nothing. The next sync picks the change up by timestamp.
 

@@ -241,10 +241,9 @@
   .texp-fold { background:none; border:0; color:var(--dim); font-size:18px; line-height:1; padding:0 4px; cursor:pointer; flex:none; margin-left:-24px; width:24px; text-align:left; }
   .texp-fold:hover { color:var(--accent); }
   /* The wizard's last step: the scripts to add to the file. */
-  .wiz-kit ol { margin:8px 0 0; padding-left:22px; font-size:13.5px; }
-  .wiz-kit li { margin:0 0 10px; }
   .wiz-kit a { color:var(--accent); }
-  .wiz-kit pre { background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:10px 12px; margin:8px 0 0; font:12px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--text); white-space:pre-wrap; }
+  /* "Other...": a typed model id, next to the picker it belongs to. */
+  input.other-id { width:auto; min-width:170px; padding:4px 8px; font-size:12.5px; margin-left:6px; }
   .texp-rename .tname { width:260px; flex:none; background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:4px 8px; color:var(--text); font:inherit; font-size:13px; }
   .texp-grid { display:grid; grid-template-columns:160px 1fr; gap:10px 12px; align-items:start; }
   .texp-grid > span:nth-child(odd) { padding-top:6px; }
@@ -430,7 +429,7 @@
         </div>
         <div class="card">
           <h3>This server <span class="hint">where Mitos itself runs</span></h3>
-          <p class="intro">No hosting credential is stored in the app; that stays with whoever deploys it. AI keys and the FileMaker login live on this server's volume, behind the site password.</p>
+          <p class="intro">No hosting credential is stored in the app; that stays with whoever deploys it. API keys and the FileMaker login live on this server's volume, behind the site password.</p>
           <div class="kv"><span class="k">Index</span><span id="srvIndex">&ndash;</span></div>
           <div class="kv"><span class="k">Last build</span><span id="srvBuilt">&ndash;</span></div>
         </div>
@@ -462,7 +461,7 @@
 
       <div id="tab-ai" style="display:none">
         <div id="keyStepNote" class="card" style="display:none">
-          <strong>Connection saved.</strong> One more thing: your AI key. It names your tables, so the first scan comes out with Organization instead of D_Org~B. Until a key is set, names are guessed.
+          <strong>Connection saved.</strong> One more thing: your API key. It names your tables, so the first scan comes out with Organization instead of D_Org~B. Until a key is set, names are guessed.
           <div class="btns"><button class="btn primary" id="keyStepContinue" type="button">Continue to scan &rarr;</button>
           <button class="link" id="keyStepSkip" type="button" style="margin-left:10px">Skip for now</button></div>
         </div>
@@ -548,7 +547,7 @@
         <div class="wiz-err" id="wizFilesErr"></div>
       </div>
       <div class="wiz-body" data-wstep="3" style="display:none">
-        <p class="wiz-why">Mitos uses your own AI account for one job: naming your tables and picking the field that names a record. Search itself makes no AI call. The key is stored on your server, and you can change it any time in Settings.</p>
+        <p class="wiz-why">Mitos uses your own API key for two things: naming your tables at scan time, and the AI stages you switch on later (Enhanced search, Semantic search, Enrichment, Pick the best). With every stage off, search makes no API call. The key is stored on your server, and you can change it any time in Settings.</p>
         <div class="set-row" style="gap:16px;align-items:flex-end;margin-bottom:4px">
           <div>
             <div style="font-size:12.5px;color:var(--dim);margin-bottom:5px">Provider</div>
@@ -590,23 +589,9 @@
       </div>
       <div class="wiz-body" data-wstep="8" style="display:none">
         <div class="card wiz-kit" style="margin-bottom:10px">
-          <p class="intro" style="margin:0;color:var(--text);font-size:14px"><b>Last step:</b> copy the Mitos scripts into your solution.</p>
-          <ol>
-            <li><a href="/api/kit/beacon.xml" download="Mitos Beacon.xmss.xml">Download the beacon script</a> and paste it into Script Workspace. The paste needs the MBS plug-in or another clipboard tool that puts script XML on the clipboard. Without one, build the two steps by hand from the outline below.</li>
-            <li>The outline of the beacon:
-<pre>OnWindowTransaction trigger on the file, set to "Mitos Beacon"
-
-Script "Mitos Beacon"
-  Perform Script on Server [ "Mitos Beacon Post" ;
-    Parameter: Get ( ScriptParameter ) ]   # the transaction JSON
-
-Script "Mitos Beacon Post"
-  Insert from URL [ <span class="wiz-kit-url"></span>/api/records/changed?key=&lt;your site password&gt; ;
-    cURL: -X POST -H "Content-Type: application/json"
-          -d @$json ]                       # the JSON from the parameter</pre>
-            </li>
-            <li class="note" style="font-size:12.5px;min-height:0">Install video: coming.</li>
-          </ol>
+          <p class="intro" style="margin:0;color:var(--text);font-size:14px"><b>Last step:</b> the FileMaker side.</p>
+          <p class="intro" style="margin:8px 0 0">Download <a href="https://navarre.ai/files/Mitos.fmp12">Mitos.fmp12</a> and follow <a href="https://navarre.ai/mitos/start" target="_blank" rel="noopener">the page</a>; the two scripts and the layout are in that file. Keep the script names as they are: Mitos calls <b>Mitos - Go To Record</b> by name.</p>
+          <p class="note" style="margin:8px 0 0;font-size:12.5px;min-height:0">Install video: coming.</p>
         </div>
       </div>
     </div>

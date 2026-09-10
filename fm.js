@@ -630,7 +630,7 @@ export async function fetchRowsByKeys(occurrence, keep, pk, keys, { db, select, 
 // from a checkpoint (store.js keeps one per page). `onProgress` reports
 // rows from the start of the table, so a resumed pull counts from where it
 // left off.
-export async function fetchAllRows(occurrence, keep, { pageSize, onProgress, onNote, onPage, startSkip = 0, filter, orderBy, db, select, shouldStop = () => false } = {}) {
+export async function fetchAllRows(occurrence, keep, { pageSize, onProgress, onNote, onPage, startSkip = 0, filter, orderBy, db, select, stats, shouldStop = () => false } = {}) {
   const fromDb = db || (await resolveDbs())[0];
   const keepSet = keep && keep.length ? new Set(keep) : null;
   // OData filter: encode spaces only (colons/dashes/T/Z must stay raw for this
@@ -696,7 +696,7 @@ export async function fetchAllRows(occurrence, keep, { pageSize, onProgress, onN
           // deliberately: refusing it is why we are here.
           // `startSkip: skip` too: the pages before this one are already
           // delivered, and a streamed pull must not hand them over twice.
-          return fetchAllRows(occurrence, keep, { pageSize: size, onProgress, onNote, onPage, startSkip: skip, filter, orderBy, db, shouldStop });
+          return fetchAllRows(occurrence, keep, { pageSize: size, onProgress, onNote, onPage, startSkip: skip, filter, orderBy, db, stats, shouldStop });
         }
         if (/timeout|504/i.test(msg) && size > 25) {
           size = Math.max(25, Math.floor(size / 4));
@@ -739,6 +739,9 @@ export async function fetchAllRows(occurrence, keep, { pageSize, onProgress, onN
     if (batch.length < size) break;
     skip += size;
   }
+  // How the read went, for the sync log: the log says the method, not
+  // only the count (Matt, 2026-09-10, as Pythia's does).
+  if (stats) { stats.pageSize = size; stats.fields = wantSelect ? select.length : 0; stats.wholeRows = !wantSelect; }
   return onPage ? count : rows;
 }
 

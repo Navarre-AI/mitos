@@ -1,8 +1,9 @@
 # The FileMaker side of Mitos
 
 Mitos works with no change to your file: search in the browser, and a result
-opens the record in FileMaker. This folder is for the optional part, search
-inside your own layouts and updates within seconds of a commit.
+opens the record in FileMaker. This folder is for the optional part: search
+inside your own layouts. Records update on the timed sync; that is the one
+update path in 1.0.
 
 The pieces ship in one small file, **Mitos.fmp12**
 (https://navarre.ai/files/Mitos.fmp12). Its `Install` layout shows the
@@ -39,24 +40,6 @@ A click on a result runs `Mitos - Go To Record` with:
 mode, goes to the layout for that table, puts `id` in the key field and
 performs the find. A record deleted since the last sync finds nothing; the
 script says so.
-
-## Updates within seconds (optional)
-
-A sync picks up every change on its schedule. For a change to be searchable
-within seconds, one script and one trigger:
-
-1. **Mitos Beacon** (`Mitos Beacon.xmss.xml` here), set as the file's
-   **OnWindowTransaction** trigger (File > File Options > Script Triggers).
-   It fires once after every successful commit with a JSON of what changed
-   and posts it to `https://your-mitos.fly.dev/api/records/changed?key=YOUR_KEY`
-   through Perform Script on Server. The id in the trigger's JSON is
-   FileMaker's internal record id, so point each indexed table's
-   OnWindowTransaction context field at the primary key.
-2. Mitos pulls just those rows over OData, indexes them and runs the stages
-   on them. A sync in progress answers 202 and the next sync catches up.
-
-Writes through the Data API or OData do not fire the trigger; the scheduled
-sync covers those.
 
 ## Hourly sync while Mitos sleeps
 
