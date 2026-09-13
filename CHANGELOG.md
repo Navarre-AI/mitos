@@ -2,6 +2,10 @@
 
 Newest first. The commit log has the detail; this is the story.
 
+## 2026-09-13, MIT
+
+- Mitos is MIT licensed. The custom Mitos License (attribution, no resale) is withdrawn. Use it, change it, ship it, sell it; keep the copyright notice.
+
 ## 0.9.3, 2026-09-10 (on the release box first)
 
 - BM25: a full-text index over titles, search text and notes, built at the end of every sync (DuckDB's fts extension, baked into the image). The exact phase still finds candidates by prefix, so "nav" still finds Navarre; BM25 weighs them by term rarity and length.

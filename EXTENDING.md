@@ -197,6 +197,5 @@ the handoff notes explain which "misses" are duplicate titles.
 - **Read `SECURITY.md` before touching auth or a provider call.** It lists
   what leaves the machine and when; keep it true.
 
-License: see `LICENSE`. Attribution required, no resale without permission.
-© 2026 Navarre AI (Fermata Software LLC), created by Matt Navarre
-(www.navarre.ai).
+License: MIT, see `LICENSE`. © 2026 Navarre AI (Fermata Software LLC),
+created by Matt Navarre (www.navarre.ai).

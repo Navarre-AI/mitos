@@ -3,6 +3,7 @@
   "version": "0.9.3",
   "description": "Mitos, Ariadne's thread. Search sidecar for FileMaker: one field, any table, the right record. Deterministic search over the fields you choose.",
   "type": "module",
+  "license": "MIT",
   "engines": {
     "node": ">=20"
   },
