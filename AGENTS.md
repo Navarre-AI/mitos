@@ -11,7 +11,7 @@ and answers with deterministic, type-aware search. Five optional AI stages
 sit on top, each with its own switch. FileMaker is the source of truth;
 nothing a person reads as record data is generated (`RULES.md`).
 
-Node 20 or later, ESM, one npm dependency (express). DuckDB runs as a CLI
+Node 24 or later (the image runs 26), ESM, one npm dependency (express). DuckDB runs as a CLI
 subprocess, not a native module. AI providers are called with raw fetch, no
 SDK. The UI is two files, `public/index.html` and `public/app.js`, with no
 build step.
@@ -62,7 +62,7 @@ flags are unverified here. What this repo does show:
 - The site password is read from the `SITE_PASSWORD` environment variable
   (`server.js`). With it set, every request needs `?key=<password>`, the
   cookie that `?key=` drops, or HTTP Basic auth.
-- `Dockerfile` builds from `node:20-slim` and installs the DuckDB CLI 1.5.3.
+- `Dockerfile` builds from `node:26-slim` and installs the DuckDB CLI 1.5.6.
 
 Everything after the install happens in the browser: an eight-step wizard
 (Connect, Files, AI key, Scan, Tables, AI stages, Sync, Add to your file).

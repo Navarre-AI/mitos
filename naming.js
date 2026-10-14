@@ -14,7 +14,7 @@ import fs from "fs";
 import path from "path";
 import crypto from "crypto";
 import { fileURLToPath } from "url";
-import { askModel, namingInfo, chat, fastModel, isEmbeddingModel } from "./ai.js";
+import { askModel, namingInfo, chat, autoModel, ensureModelList, isEmbeddingModel } from "./ai.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
@@ -99,15 +99,16 @@ export async function nameTables(tables, { force = false } = {}) {
 
   try {
     // The chosen naming model may be refused by the key ("not allowed to
-    // sample", a 403 or 404 on the model). Then the provider's fast model
-    // names the tables instead, and the cache says which one did.
+    // sample", a 403 or 404 on the model). Then another chat model from the
+    // live list names the tables instead, and the cache says which one did.
+    await ensureModelList().catch(() => {});
     let usedModel = namingInfo().model;
     let reply;
-    const fast = fastModel();
+    const fast = autoModel("chat", usedModel);
     const payload = JSON.stringify({ tables: summary });
-    // An embedding model cannot name anything (a test box had
-    // text-embedding-3-small saved as the naming model on 2026-09-09): go
-    // straight to the fast model.
+    // An embedding model cannot name anything (a test box had an embedding
+    // model saved as the naming model on 2026-09-09): go straight to the
+    // other model.
     if (isEmbeddingModel(usedModel) && fast) {
       usedModel = fast;
       reply = await chat({ model: fast, system: SYSTEM, user: payload, maxTokens: 8000 });
@@ -115,8 +116,8 @@ export async function nameTables(tables, { force = false } = {}) {
       try { reply = await askModel(SYSTEM, payload, 8000); }
       catch (e) {
         // Any refusal of the chosen model (403 "not allowed to sample", 404,
-        // "not a chat model", a bad request) still names the tables, with the
-        // provider's fast model.
+        // "not a chat model", a bad request) still names the tables, with
+        // another chat model from the live list.
         if (!fast || fast === usedModel) throw e;
         usedModel = fast;
         reply = await chat({ model: fast, system: SYSTEM, user: payload, maxTokens: 8000 });

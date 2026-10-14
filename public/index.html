@@ -31,6 +31,7 @@
   .row .title { font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .row .why { color:var(--accent); font-size:12px; margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .row .sub { color:var(--dim); font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .row .pct { color:var(--dim); opacity:.6; font-size:12px; flex-shrink:0; font-variant-numeric:tabular-nums; }
   .score { color:var(--dim); font-size:11px; flex-shrink:0; max-width:40%; text-align:right; line-height:1.4; }
   .score.title { color:var(--accent); }
   .empty { border:1px dashed var(--line); border-radius:10px; padding:18px 20px; color:var(--dim); font-size:14px; }
@@ -469,6 +470,9 @@
           <h3>Appearance</h3>
           <div class="set-row" style="gap:12px"><span class="note" style="min-height:0">Light or dark</span>
             <div class="themeopt" id="themeOpt"><button type="button" data-theme="system">System</button><button type="button" data-theme="light">Light</button><button type="button" data-theme="dark">Dark</button></div>
+          </div>
+          <div class="set-row" style="gap:12px;margin-top:10px"><span class="note" style="min-height:0">Language of the search screen</span>
+            <div class="themeopt" id="langOpt"><button type="button" data-lang="system">System</button><button type="button" data-lang="en">English</button><button type="button" data-lang="nl">Nederlands</button><button type="button" data-lang="fr">Français</button><button type="button" data-lang="el">Ελληνικά</button></div>
           </div>
         </div>
         <div class="card">

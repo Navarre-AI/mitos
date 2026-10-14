@@ -8,7 +8,7 @@ import zlib from "zlib";
 import { execSync } from "child_process";
 import { fileURLToPath } from "url";
 
-const DUCKDB_VER = "v1.5.3";
+const DUCKDB_VER = "v1.5.6";
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const isWin = process.platform === "win32";
 const binDir = path.join(root, "bin");

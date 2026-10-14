@@ -13,7 +13,7 @@ import { fmConfigured, fmConnection, setConnection, withConnection, checkAuth, l
 import { indexStats, stageStats, sql, storeExists, ensureIndexTable, vectorSearch, passEstimate, clearEnrichment, freeDiskBytes, totalDiskBytes } from "./store.js";
 import { buildIndex, indexManifest, isBuilding, tablesConfig, MITOS_JSON_FIELD, refreshRecords } from "./indexer.js";
 import { search } from "./search.js";
-import { namingInfo, keyStatus, isOpenAIModel, isEmbeddingModel, askModel, roleModels, PROVIDERS, STAGE_NAMES, STAGE_DEFAULTS, STAGE_LIMITS, stages, stageReady, keyForProvider, providerOf, chat, estimateCost, EMBED_CAP_PER_SYNC } from "./ai.js";
+import { namingInfo, keyStatus, isEmbeddingModel, askModel, roleModels, PROVIDERS, STAGE_NAMES, STAGE_DEFAULTS, STAGE_LIMITS, stages, stageReady, keyForProvider, providerOf, modelId, chat, estimateCost, EMBED_CAP_PER_SYNC, modelListCache, refreshModelList, ensureModelList } from "./ai.js";
 import { vectorKey, embedInfo, embedQuery } from "./embed.js";
 import { defaultEnrichPrompt, promptFor, enrichKeyFor, enrichPreview, readPasses } from "./stages.js";
 import { understand, clearUnderstandCache } from "./understand.js";
@@ -355,7 +355,7 @@ function stagesView() {
   const out = {};
   for (const name of STAGE_NAMES) {
     const r = stageReady(name);
-    out[name] = { ...s[name], savedModel: saved[name]?.model || "", ready: r.ready, why: r.why || null, provider: s[name].model ? providerOf(s[name].model) : null };
+    out[name] = { ...s[name], savedModel: saved[name]?.model || "", ready: r.ready, why: r.why || null, provider: s[name].model ? providerOf(s[name].model, name === "semantic" ? "embedding" : "chat") || null : null };
   }
   return out;
 }
@@ -441,8 +441,8 @@ app.post("/api/config", async (req, res) => {
           if (!STAGE_DEFAULTS[name] || !patch || typeof patch !== "object") continue;
           const cur = { ...(cfg.ai.stages[name] || {}) };
           // An embedding model answers no prompt: only the semantic stage
-          // may have one (a test box had text-embedding-3-small saved as the
-          // naming model on 2026-09-09).
+          // may have one (a test box had an embedding model saved as the
+          // naming model on 2026-09-09). The kind comes from the live list.
           if (name !== "semantic" && patch.model && isEmbeddingModel(patch.model)) {
             return res.status(400).json({ error: `"${String(patch.model).trim()}" is an embedding model. Choose a chat model for ${name === "enrich" ? "enrichment" : name}.` });
           }
@@ -935,128 +935,16 @@ app.get("/api/disk", (_req, res) => {
   catch (e) { res.json({ freeBytes: null, error: String(e.message || e) }); }
 });
 
-// Live model lists. Pythia's lesson: a hardcoded list goes stale and the user
-// cannot pick a model that exists. Fetch from whichever provider has a key,
-// cache for a day, fall back to a static list when offline.
-const MODELS_PATH = path.join(DATA_DIR, "models.json");
-const FALLBACK_MODELS = [
-  { id: "claude-haiku-4-5", provider: "anthropic" },
-  { id: "claude-sonnet-5", provider: "anthropic" },
-  { id: "claude-opus-5", provider: "anthropic" },
-];
-// family: the group a model belongs to; rank: low to high power, for ordering.
-function modelFamily(id) {
-  const m = String(id).toLowerCase();
-  if (m.startsWith("claude")) {
-    if (/haiku/.test(m)) return { family: "Haiku", rank: 1 };
-    if (/sonnet/.test(m)) return { family: "Sonnet", rank: 2 };
-    if (/opus/.test(m)) return { family: "Opus", rank: 3 };
-    if (/fable|mythos/.test(m)) return { family: "Fable", rank: 4 };
-    return null;
-  }
-  if (/^text-embedding-3-(small|large)$/.test(m)) return { family: "Embedding", rank: 0 };
-  if (/^gemini-embedding/.test(m) || /^voyage-/.test(m)) return { family: "Embedding", rank: 0 };
-  if (/^gemini-/.test(m)) return { family: "Gemini", rank: /flash-lite/.test(m) ? 1 : /flash/.test(m) ? 2 : 3 };
-  // OpenAI chat: Pythia's fixed list of three, nothing else. OpenAI's own
-  // list has no "current models" feed worth trusting, so the menu is these.
-  const fixed = OPENAI_FIXED.find((f) => f.id === m);
-  return fixed ? { family: "OpenAI", rank: fixed.rank } : null;
-}
-const OPENAI_FIXED = [
-  { id: "gpt-5.6-luna", name: "GPT-5.6 Luna (cheapest)", rank: 1 },
-  { id: "gpt-5.6-terra", name: "GPT-5.6 Terra (balanced)", rank: 2 },
-  { id: "gpt-5.6-sol", name: "GPT-5.6 Sol (most powerful)", rank: 3 },
-];
-// Google and Voyage: fixed short lists (docs/research-ai-stages.md), the
-// way OpenAI's chat list is fixed. Offered whenever the key exists.
-const GOOGLE_FIXED = [
-  { id: "gemini-2.5-flash-lite", name: "Gemini 2.5 Flash-Lite (fastest)", kind: "chat" },
-  { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash", kind: "chat" },
-  { id: "gemini-embedding-001", name: "gemini-embedding-001", kind: "embedding" },
-];
-const VOYAGE_FIXED = [
-  { id: "voyage-4-lite", name: "voyage-4-lite (cheapest)", kind: "embedding" },
-  { id: "voyage-4", name: "voyage-4", kind: "embedding" },
-  { id: "voyage-4-large", name: "voyage-4-large", kind: "embedding" },
-];
-const OPENAI_EMBED_FIXED = [
-  { id: "text-embedding-3-large", name: "text-embedding-3-large", kind: "embedding" },
-  { id: "text-embedding-3-small", name: "text-embedding-3-small (cheapest)", kind: "embedding" },
-];
-function curateModels(all) {
-  // The OpenAI three are always offered when an OpenAI key exists, with
-  // Pythia's labels, whether or not the dump happened to list them.
-  const keys = keyStatus();
-  if (keys.openai.configured) for (const f of [...OPENAI_FIXED, ...OPENAI_EMBED_FIXED]) if (!all.some((m) => m.id === f.id)) all = [...all, { id: f.id, name: f.name, provider: "openai", kind: f.kind || "chat", created: "" }];
-  if (keys.google.configured) for (const f of GOOGLE_FIXED) if (!all.some((m) => m.id === f.id)) all = [...all, { id: f.id, name: f.name, provider: "google", kind: f.kind, created: "" }];
-  if (keys.voyage.configured) for (const f of VOYAGE_FIXED) if (!all.some((m) => m.id === f.id)) all = [...all, { id: f.id, name: f.name, provider: "voyage", kind: f.kind, created: "" }];
-  all = all.map((m) => { const f = OPENAI_FIXED.find((x) => x.id === m.id); return f ? { ...m, name: f.name } : m; });
-  const by = new Map();
-  for (const m of all) {
-    const f = modelFamily(m.id);
-    if (!f) continue;
-    const key = m.provider + ":" + f.family;
-    if (!by.has(key)) by.set(key, []);
-    by.get(key).push({ ...m, family: f.family, rank: f.rank, version: f.version || 0 });
-  }
-  const out = [];
-  for (const list of by.values()) {
-    // newest first: version, then the provider's creation stamp
-    list.sort((a, b) => (b.version - a.version) || String(b.created).localeCompare(String(a.created)) || b.id.localeCompare(a.id));
-    // Claude: current and one previous. OpenAI, Google and Voyage: the fixed lists, whole.
-    out.push(...(list[0]?.provider === "anthropic" ? list.slice(0, 2) : list));
-  }
-  out.sort((a, b) => a.provider.localeCompare(b.provider) || a.rank - b.rank || (b.version - a.version) || String(b.created).localeCompare(String(a.created)));
-  // Every row says what it is: the pickers for naming, understand, rerank
-  // and enrichment hide embedding models, the semantic picker shows only them.
-  return out.map(({ version, created, ...m }) => ({ ...m, kind: isEmbeddingModel(m.id) ? "embedding" : "chat" }));
-}
-
+// Live model lists, straight from the providers (ai.js refreshModelList):
+// every enabled provider's chat and embedding models, newest first, cached
+// for a day. No list is baked in and none is trimmed by model name; when a
+// provider cannot be reached its last good list stays. Other... in every
+// picker takes an id the list does not show.
 app.get("/api/ai/models", async (req, res) => {
-  try {
-    const cached = JSON.parse(fs.readFileSync(MODELS_PATH, "utf8"));
-    // Curate on the way out too: a cache written before the curation rule
-    // otherwise serves the raw dump for a day.
-    if (req.query.refresh !== "1" && Date.now() - Date.parse(cached.at) < 86400000) return res.json({ ...cached, models: curateModels(cached.models || []) });
-  } catch {}
-  const keys = keyStatus();
-  const out = [];
-  const errors = [];
-  if (keys.anthropic.configured) {
-    try {
-      const k = readConfig().ai?.anthropicKey || process.env.ANTHROPIC_API_KEY;
-      const r = await fetch("https://api.anthropic.com/v1/models?limit=50", {
-        headers: { "x-api-key": k, "anthropic-version": "2023-06-01" },
-        signal: AbortSignal.timeout(15000),
-      });
-      if (!r.ok) throw new Error(`Anthropic ${r.status}`);
-      for (const m of (await r.json()).data || []) out.push({ id: m.id, name: m.display_name || m.id, provider: "anthropic", kind: "chat", created: m.created_at || "" });
-    } catch (e) { errors.push(`Anthropic: ${e.message}`); }
-  }
-  if (keys.openai.configured) {
-    try {
-      const k = readConfig().ai?.openaiKey || process.env.OPENAI_API_KEY;
-      const r = await fetch("https://api.openai.com/v1/models", {
-        headers: { Authorization: `Bearer ${k}` }, signal: AbortSignal.timeout(15000),
-      });
-      if (!r.ok) throw new Error(`OpenAI ${r.status}`);
-      for (const m of (await r.json()).data || []) {
-        if (!isOpenAIModel(m.id)) continue;
-        // Chat models for naming and enrichment; embedding models for the
-        // embedding role. Audio, image and the rest are neither.
-        if (isEmbeddingModel(m.id)) { out.push({ id: m.id, name: m.id, provider: "openai", kind: "embedding", created: String(m.created || "") }); continue; }
-        if (/whisper|tts|audio|image|realtime|search|transcribe/i.test(m.id)) continue;
-        out.push({ id: m.id, name: m.id, provider: "openai", kind: "chat", created: String(m.created || "") });
-      }
-    } catch (e) { errors.push(`OpenAI: ${e.message}`); }
-  }
-  // CURATE (Pythia's rule): families low to high, each with the current model
-  // and one previous. The raw provider dump (dated snapshots, codex, pro,
-  // chat-latest, 3.5-turbo) is not a list a person can choose from.
-  const models = curateModels(out.length ? out : FALLBACK_MODELS.map((m) => ({ ...m, name: m.id, kind: "chat", created: "" })));
-  const payload = { at: new Date().toISOString(), models, source: out.length ? "live" : "fallback", ...(errors.length ? { errors } : {}) };
-  try { fs.writeFileSync(MODELS_PATH, JSON.stringify(payload, null, 2)); } catch {}
-  res.json(payload);
+  const cached = modelListCache();
+  if (req.query.refresh !== "1" && cached && Date.now() - Date.parse(cached.at) < 86400000) return res.json(cached);
+  try { res.json(await refreshModelList()); }
+  catch (e) { res.json({ ...(cached || { models: [] }), errors: [String(e.message || e)] }); }
 });
 
 // Prove an AI key works before relying on it: one tiny real call.
@@ -1070,14 +958,21 @@ app.post("/api/ai/test", async (req, res) => {
       if (!PROVIDERS[provider]) return res.json({ ok: false, error: "Unknown provider." });
       const key = String(req.body.key || keyForProvider(provider, { evenIfDisabled: true }).key || "").trim();
       if (!key) return res.json({ ok: false, error: "No key to test for this provider." });
+      const sem = stages().semantic.model;
+      const voyageModel = provider === "voyage" && sem && providerOf(sem, "embedding") === "voyage" ? modelId(sem) : "";
       const r = provider === "anthropic"
         ? await fetch("https://api.anthropic.com/v1/models?limit=1", { headers: { "x-api-key": key, "anthropic-version": "2023-06-01" }, signal: AbortSignal.timeout(15000) })
         : provider === "openai"
           ? await fetch("https://api.openai.com/v1/models", { headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(15000) })
           : provider === "google"
             ? await fetch("https://generativelanguage.googleapis.com/v1beta/models?pageSize=1", { headers: { "x-goog-api-key": key }, signal: AbortSignal.timeout(15000) })
-            : await fetch("https://api.voyageai.com/v1/embeddings", { method: "POST", headers: { Authorization: `Bearer ${key}`, "content-type": "application/json" }, body: JSON.stringify({ model: "voyage-4-lite", input: ["ok"], input_type: "query" }), signal: AbortSignal.timeout(15000) });
-      if (!r.ok) return res.json({ ok: false, error: r.status === 401 || r.status === 403 || r.status === 400 ? "That key was rejected." : `The provider answered ${r.status}.` });
+            : await fetch("https://api.voyageai.com/v1/embeddings", { method: "POST", headers: { Authorization: `Bearer ${key}`, "content-type": "application/json" }, body: JSON.stringify({ ...(voyageModel ? { model: voyageModel } : {}), input: ["ok"], input_type: "query" }), signal: AbortSignal.timeout(15000) });
+      // Voyage has no free call and no model list. With a Voyage model
+      // chosen, one tiny embedding; without one, the call names no model:
+      // a refused key answers 401 or 403, a good one is told the model is
+      // missing (400 or 422).
+      const voyageUnnamed = provider === "voyage" && !voyageModel && (r.status === 400 || r.status === 422);
+      if (!r.ok && !voyageUnnamed) return res.json({ ok: false, error: r.status === 401 || r.status === 403 || r.status === 400 ? "That key was rejected." : `The provider answered ${r.status}.` });
       // A key that works is a provider that is on. The switch is saved so
       // the AI tab renders it from the server's state alone.
       { const cfg = readConfig(); cfg.ai = cfg.ai || {}; cfg.ai.providers = cfg.ai.providers || {}; cfg.ai.providers[provider] = { enabled: true }; writeConfig(cfg); }
@@ -1412,6 +1307,9 @@ setInterval(autoSyncTick, 60000);
 
 app.listen(PORT, async () => {
   console.log(`Mitos listening on http://localhost:${PORT}`);
+  // The providers' model lists, read once when there is no cached one: which
+  // provider serves a model and the default picks come from them (ai.js).
+  await ensureModelList().catch((e) => console.error("model list:", e.message));
   console.log(`  fm: ${fmConfigured() ? "configured" : "not configured (sample mode)"}`);
   console.log(`  naming: ${JSON.stringify(namingInfo())}`);
   console.log(`  stages: ${STAGE_NAMES.map((n) => `${n}=${stages()[n].on ? (stageReady(n).ready ? "on" : "on, " + stageReady(n).why) : "off"}`).join(", ")}`);

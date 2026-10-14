@@ -4,11 +4,11 @@
 // vector from any provider compares the same way in DuckDB.
 //
 // Two kinds of text: a "document" (an index row) and a "query" (what a person
-// typed). Gemini and Voyage embed the two differently on purpose and want to
+// typed). Google and Voyage embed the two differently on purpose and want to
 // be told which is which; OpenAI does not care.
 
 import "./env.js";
-import { keyForProvider, providerOf, stages } from "./ai.js";
+import { keyForProvider, providerOf, modelId, PROVIDERS, stages } from "./ai.js";
 
 // Batch sizes under each provider's request limit, with room to spare.
 const BATCH = { openai: 200, google: 100, voyage: 128 };
@@ -17,13 +17,16 @@ const MAX_CHARS = 2000;
 
 export function embedInfo() {
   const s = stages().semantic;
-  const provider = s.model ? providerOf(s.model) : null;
-  return { provider, model: s.model || "", dims: Number(s.dims) || 256, configured: Boolean(provider && keyForProvider(provider).key) };
+  // The provider comes from configuration or the live list, never the
+  // name (ai.js providerOf); the model id goes to the API bare.
+  const provider = s.model ? providerOf(s.model, "embedding") || null : null;
+  return { provider, model: modelId(s.model), dims: Number(s.dims) || 256, configured: Boolean(provider && PROVIDERS[provider]?.embed && keyForProvider(provider).key) };
 }
 
 // The vector key marks what produced a vector: provider, model and size. A
-// row whose stored key differs is re-embedded on the next sync.
-export const vectorKey = () => { const i = embedInfo(); return i.model ? `${i.provider}/${i.model}/${i.dims}` : ""; };
+// row whose stored key differs is re-embedded on the next sync. No provider
+// resolved, no key: a guess here would re-embed every row.
+export const vectorKey = () => { const i = embedInfo(); return i.model && i.provider ? `${i.provider}/${i.model}/${i.dims}` : ""; };
 
 function normalize(v, dims) {
   const out = v.slice(0, dims);
