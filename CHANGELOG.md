@@ -2,6 +2,14 @@
 
 Newest first. The commit log has the detail; this is the story.
 
+## 0.9.4, 2026-10-19 (demo box)
+
+- Model lists come live from each provider's own list, cached a day. No model name is hardcoded or guessed from its shape.
+- A match percentage at the right of each result row (on trial; signal bars are planned in its place).
+- Node 26 (Node 20 ended 30 April 2026) and DuckDB 1.5.6. An index written by 1.5.3 opens as is.
+- Express and its query parser patched (npm audit).
+- The four-language search screen from 14 October is removed. It was a class demo.
+
 ## 2026-09-13, MIT
 
 - Mitos is MIT licensed. The custom Mitos License (attribution, no resale) is withdrawn. Use it, change it, ship it, sell it; keep the copyright notice.
