@@ -14,7 +14,9 @@ The first release Matt calls finished. There is no 1.0: it went from 0.9.4 strai
 - **Models come from navarre.ai/ai-models.json**, the same list Pythia and Clio read, refreshed every 12 hours and whenever an API key is saved. Menus are grouped by job, with a recommended pick per stage.
 - **Best match by the gap.** Every typed word has to match, and the next result has to be well behind. "Use AI to determine best match" is a switch under it. No "why" line under results any more.
 - **Thinking models fit their budget.** A Claude model that thinks first no longer runs out of answer and fails the enrichment test; when one does, the message says so.
+- The Tables tab's Records column shows FileMaker's count at the last sync, not the last scan. Vectors go when their records go.
 - Keep working while a sync runs, with a strip at the top. The deletion check shows progress. Changing a table's fields warns that it re-reads the table.
+- Docs rebuilt: a short README, INSTALL, HOW-IT-WORKS, API, and RECORD-UPDATES for the optional one-record script. "Site password" throughout; "API key" means an AI provider's key.
 - Fixes from the review: the sign-in redirect stays on the site, a record refresh can't collide with a sync, the manifest is written after each table.
 
 ## 0.9.4, 2026-10-19 (demo box)

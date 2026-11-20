@@ -1,4 +1,4 @@
-// fm.js — FileMaker client for Pythia. OData side: metadata, counts.
+// fm.js: the FileMaker client for Mitos (started as Pythia's). OData side: metadata, counts.
 // The OData $metadata carries more than the docs advertise: per-entity
 // com.filemaker.odata.TableID (FMTID) annotations let us group table
 // occurrences back to their BASE TABLE, NavigationProperty elements carry
@@ -172,7 +172,7 @@ function decodeXml(s) {
 
 // Base-table display name for a group of occurrence names: the longest common
 // suffix across the group, e.g. {C__Company, I_Company, P_Join_Company} ->
-// "Company" — but only where the suffix starts on a word boundary in EVERY
+// "Company", but only where the suffix starts on a word boundary in EVERY
 // occurrence name. A raw character suffix can start mid-word ({RL_Report,
 // REP_ort} -> "ort"; a Person Join group -> "n"), so fragments under 3 chars
 // or mid-word are rejected and the shortest whole occurrence name wins
@@ -203,7 +203,7 @@ export function baseName(names) {
 
 // Schema across every configured/discovered file, merged. Each table carries
 // its `db`; table names are unique across the whole set (collisions get a
-// " (filename)" suffix) so the rest of Pythia — cube, config, display names —
+// " (filename)" suffix) so the rest of Mitos (the copy, config, display names)
 // keeps working on a flat table namespace.
 export async function fetchSchema(refresh = false, onEvent = () => {}) {
   const dbs = await resolveDbs(refresh);
@@ -240,7 +240,7 @@ export async function fetchSchema(refresh = false, onEvent = () => {}) {
   // holds a TO of it, because an external TO is served over OData once its
   // home file is API-accessible to the account (see GOTCHAS.md). Merge tables
   // whose full field name:type signature matches; the copy with the most
-  // occurrences wins — a table's home file typically holds many TOs of it, a
+  // occurrences wins, a table's home file typically holds many TOs of it, a
   // borrowing file one or two. Tables under 4 fields are exempt: generic
   // globals/utility tables could false-merge on a tiny signature.
   const sig = (t) => (t.fields.length >= 4 ? t.fields.map((f) => `${f.name}:${f.type}`).sort().join("|") : null);
@@ -360,7 +360,7 @@ async function fetchSchemaForDb(db) {
     db,
     // occurrences[0] is the canonical query target for $count and row sync,
     // so sort the safest name first: `?`/`~` in a TO name is a hard 400
-    // ("syntax error in URL", even encoded — verified against FMS 21), spaced
+    // ("syntax error in URL", even encoded, verified against FMS 21), spaced
     // names hit the entity-encoding quirk (see odataGetEntity), and shorter
     // is tidier. Every occurrence serves the same base table.
     occurrences: occs.map((o) => o.name).sort((a, b) =>
@@ -490,7 +490,7 @@ export async function layoutStats(tables) {
 // --- Data API: layout inventory --------------------------------------------
 // Used at config-save time to report which chosen tables lack a layout.
 // (Verified against current Claris docs: NO API can CREATE layouts on a
-// hosted file, so Pythia detects and reports; a human creates them in Pro.)
+// hosted file, so Mitos detects and reports; a human creates them in Pro.)
 
 const dataApiBase = (db) =>
   `https://${conn.host}/fmi/data/vLatest/databases/${encodeURIComponent(db)}`;
@@ -526,7 +526,7 @@ export async function dataApiLayouts() {
 // Some deployments (seen on FMS 26 behind nginx) decode the URL path once
 // before the OData parser sees it, so a space in an ENTITY name arrives raw
 // and trips "-1002 syntax error in URL". Those servers need the entity segment
-// DOUBLE-encoded (%2520) — while correctly-behaved servers want plain %20.
+// DOUBLE-encoded (%2520), while correctly-behaved servers want plain %20.
 // Detect on first failure and remember for the rest of the boot. The database
 // segment is unaffected either way (single-encoded works on both).
 let doubleEncodeEntities = false;
@@ -562,9 +562,9 @@ async function odataGetEntity(db, entity, suffix, timeoutMs, accept, signal) {
 //    (tabs, vertical tabs, stray \r pasted into fields decades ago), which
 //    strict JSON.parse rejects ("Bad control character in string literal");
 //  - a failed calc evaluation serialized as a BARE `?` in value position
-//    (`"cRate": ?`) — the layout-style error marker, dumped into JSON.
+//    (`"cRate": ?`), the layout-style error marker, dumped into JSON.
 // On parse failure, re-walk the text with string-literal awareness: inside
-// strings, \u-escape control chars (escape, don't strip — the bytes are the
+// strings, \u-escape control chars (escape, don't strip, the bytes are the
 // client's data); outside strings, replace `?` tokens with null (a bare ? is
 // never legal JSON, so this can't touch real data) and repair zero-less
 // fractions. Structural whitespace stays raw.

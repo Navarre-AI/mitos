@@ -16,15 +16,15 @@ const target = path.join(binDir, isWin ? "duckdb.exe" : "duckdb");
 
 const onPath = () => { try { execSync(isWin ? "where duckdb" : "command -v duckdb", { stdio: "ignore" }); return true; } catch { return false; } };
 
-if (fs.existsSync(target)) { console.log("[duckdb] bundled binary present — ok"); process.exit(0); }
-if (onPath()) { console.log("[duckdb] found on PATH — ok"); process.exit(0); }
-if (isWin) { console.log("[duckdb] Windows: install DuckDB manually (or use Docker) — https://duckdb.org"); process.exit(0); }
+if (fs.existsSync(target)) { console.log("[duckdb] bundled binary present, ok"); process.exit(0); }
+if (onPath()) { console.log("[duckdb] found on PATH, ok"); process.exit(0); }
+if (isWin) { console.log("[duckdb] Windows: install DuckDB manually (or use Docker): https://duckdb.org"); process.exit(0); }
 
 const arch = process.arch === "arm64" ? "arm64" : "amd64";
 const asset = process.platform === "darwin" ? "duckdb_cli-osx-universal.gz"
   : process.platform === "linux" ? `duckdb_cli-linux-${arch}.gz`
   : null;
-if (!asset) { console.log(`[duckdb] no auto-install for ${process.platform}/${process.arch}; install manually — https://duckdb.org`); process.exit(0); }
+if (!asset) { console.log(`[duckdb] no auto-install for ${process.platform}/${process.arch}; install manually: https://duckdb.org`); process.exit(0); }
 
 const url = `https://github.com/duckdb/duckdb/releases/download/${DUCKDB_VER}/${asset}`;
 try {

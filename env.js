@@ -1,4 +1,4 @@
-// env.js — load .env with OVERRIDE semantics, no dependency.
+// env.js, load .env with OVERRIDE semantics, no dependency.
 // Why override: a dev machine may export ambient FM_* vars from its shell
 // profile (e.g. FM_USER=...). Node's --env-file refuses to override those,
 // so Mitos would silently connect as the wrong account. A .env file sitting
