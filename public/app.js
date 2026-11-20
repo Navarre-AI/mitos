@@ -97,7 +97,7 @@ async function runAi(query) {
     render(data, { ai: true });
   } catch (e) {
     if (ctrl.signal.aborted) return;
-    think.textContent = " · AI stages failed: " + e.message;
+    think.textContent = " · the AI part failed: " + e.message;
   } finally { if (aiAbort === ctrl) aiAbort = null; }
 }
 
@@ -523,11 +523,23 @@ function attachSync(tables, opts = {}) {
   // when the next pass starts.
   let phase = null, plan = null, stagesOnly = false, endLine = "";
   const stageSum = { done: 0, total: 0 };
+  // The three phases of a sync, in order: Data (pull and index), Enrichment,
+  // Vectors. Three small bars, in the strip and in this window. A phase with
+  // nothing to do shows done.
+  const ph = { data: { s: "run", f: 0 }, enrich: { s: "wait", f: 0, total: 0, done: 0 }, embed: { s: "wait", f: 0, total: 0, done: 0 } };
+  const phSet = (name, state, f) => { const p = ph[name]; if (state) p.s = state; if (f != null) p.f = f; if (p.s === "done") p.f = 1; paintPhases(); };
+  const phBegin = (name) => { for (const n of Object.keys(ph)) if (n !== name && ph[n].s === "run") phSet(n, "done"); phSet(name, "run", ph[name].f || 0); };
+  const phAll = (state) => { for (const n of Object.keys(ph)) if (ph[n].s !== "done" || state !== "done") { ph[n].s = state; if (state === "done") ph[n].f = 1; } paintPhases(); };
+  const phTitle = { wait: "waiting", run: "working", done: "done" };
+  const phHtml = () => [["data", "Data"], ["enrich", "Enrichment"], ["embed", "Vectors"]].map(([k, l]) =>
+    `<span class="ph ${ph[k].s}" title="${l}: ${phTitle[ph[k].s]}${ph[k].s === "run" ? " " + Math.round(ph[k].f * 100) + "%" : ""}"><i>${l}</i><b><u style="width:${Math.round(ph[k].f * 100)}%"></u></b></span>`).join("");
+  function paintPhases() { for (const id of ["syncStripPh", "syncPhases"]) { const e = $(id); if (e) e.innerHTML = phHtml(); } }
+  paintPhases();
   const phaseStart = (name, total, table) => {
     phase = { name, total: Number(total) || 0, table, done: 0 };
     subLocked = true;
-    setSub(name === "enrich" ? "Enrichment" : "Semantic search: building vectors");
-    paintNow({ table: name === "enrich" ? "Enrichment: " + friendly(table) : "Semantic search", status: "0%", prog: "0 / " + num(total) });
+    setSub(name === "enrich" ? "Enrichment" : "Building vectors");
+    paintNow({ table: name === "enrich" ? "Enrichment: " + friendly(table) : "Vectors", status: "0%", prog: "0 / " + num(total) });
     if (Object.keys(rows).length) dh.querySelector(".txt").textContent = `${folded} table${folded === 1 ? "" : "s"} read and indexed · ${num(foldedRows)} records`;
     overall();
   };
@@ -537,7 +549,7 @@ function attachSync(tables, opts = {}) {
     const frac = phase.total ? phase.done / phase.total : 0;
     const left = phase.done && ms ? (ms / phase.done) * (phase.total - phase.done) : 0;
     paintNow({
-      table: phase.name === "enrich" ? "Enrichment: " + friendly(table || phase.table) : "Semantic search",
+      table: phase.name === "enrich" ? "Enrichment: " + friendly(table || phase.table) : "Vectors",
       status: Math.round(frac * 100) + "% · " + fmtDur(ms) + (left ? " · about " + fmtDur(left) + " left" : "") + (cost ? " · " + money(cost) + " so far" : ""),
       prog: num(phase.done) + " / " + num(phase.total) + (failed ? " (" + num(failed) + " failed)" : ""),
     });
@@ -574,6 +586,21 @@ function attachSync(tables, opts = {}) {
       if (phase) frac = stageFrac();
     }
     $("syncOverall").style.width = Math.min(99, Math.round(frac * 100)) + "%";
+    // The Data bar: the pull and the index step only.
+    if (ph.data.s === "run") {
+      let d;
+      if (stagesOnly) d = 1;
+      else if (plan && expSum > 0) {
+        const mean = expSum / Math.max(1, list.filter((x) => Number(x.expected) > 0).length);
+        const w = (x) => Number(x.expected) > 0 ? Number(x.expected) : mean;
+        const wSum = list.reduce((a, x) => a + w(x), 0) || 1;
+        const pull = list.reduce((a, x) => a + w(x) * (x.pullDone ? 1 : Number(x.expected) > 0 ? Math.min(1, (x.pullRows || 0) / Number(x.expected)) : 0), 0) / wSum;
+        const index = list.reduce((a, x) => a + w(x) * (x.indexed ? 1 : x.indexTotal ? Math.min(1, (x.indexDone || 0) / x.indexTotal) : 0), 0) / wSum;
+        const ps = Number(plan.pullShare) || 0, is = Number(plan.indexShare) || 0;
+        d = ps + is > 0 ? (ps * pull + is * index) / (ps + is) : 0;
+      } else d = (done + list.reduce((a, x) => a + (x.el.classList.contains("done") ? 0 : (x.frac || 0)), 0)) / Math.max(1, total);
+      ph.data.f = Math.min(0.99, d); paintPhases();
+    }
     paintStrip();
   };
   // The one end line, from the server's summary when it sends one.
@@ -585,9 +612,9 @@ function attachSync(tables, opts = {}) {
     else if (!changed) parts.push("nothing new from FileMaker" + (unchanged ? " · " + num(unchanged) + " unchanged" : ""));
     else parts.push(num(changed) + " record" + (changed === 1 ? "" : "s") + " changed" + (unchanged ? " · " + num(unchanged) + " unchanged" : ""));
     if (Number(s.vectorsBuilt)) parts.push(num(s.vectorsBuilt) + " vector" + (Number(s.vectorsBuilt) === 1 ? "" : "s") + " built");
-    if (Number(s.vectorsWaiting)) parts.push(num(s.vectorsWaiting) + " waiting for Run");
+    if (Number(s.vectorsWaiting)) parts.push(num(s.vectorsWaiting) + " vectors left for the next sync");
     if (Number(s.notesWritten)) parts.push(num(s.notesWritten) + " note" + (Number(s.notesWritten) === 1 ? "" : "s") + " written");
-    if (Number(s.notesWaiting)) parts.push(num(s.notesWaiting) + " notes waiting for Run");
+    if (Number(s.notesWaiting)) parts.push(num(s.notesWaiting) + " notes left for the next sync");
     for (const t of s.stopped || []) if (t) parts.push(String(t).replace(/[.\s]+$/, ""));
     if (!parts.length) parts.push("nothing to do");
     return parts.join(" · ");
@@ -608,6 +635,7 @@ function attachSync(tables, opts = {}) {
         total = (ev.tables || []).length;
         plan = ev.plan && typeof ev.plan === "object" ? ev.plan : null;
         stagesOnly = Boolean(ev.stagesOnly);
+        if (stagesOnly) phSet("data", "done");
         for (const t of ev.tables || []) {
           if (typeof t === "string") rowFor(t);
           else { if (t.label) displayNames[t.name] = t.label; const r = rowFor(t.name, t.label); r.expected = t.expected || null; }
@@ -618,6 +646,8 @@ function attachSync(tables, opts = {}) {
       }
       case "phase":
         if (ev.phase === "schema") { logLine("Reading the FileMaker schema over OData..."); setSub("Reading the FileMaker schema"); }
+        else if (ev.phase === "enrich") phBegin("enrich");
+        else if (ev.phase === "embed") phBegin("embed");
         else if (ev.phase === "rebuild") { logLine("Rebuilding the search index from the local copies. Nothing is read from FileMaker."); setSub("Rebuilding the search index"); }
         break;
       // The optional stages after the index: search notes and vectors. They
@@ -625,15 +655,15 @@ function attachSync(tables, opts = {}) {
       // A paid phase owns the bar once it starts: the sync's tables are
       // read and indexed, and the bar now says how far the phase is, with
       // elapsed, remaining and spend, so 100% never sits above a running job.
-      case "enrich-start": phaseStart("enrich", ev.pending, ev.table); logLine("Enrichment: " + fname2(ev.table) + ", " + num(ev.pending) + " records with " + ev.model); break;
-      case "enrich-progress": phaseProgress(ev.done, ev.total, ev.ms, ev.cost, ev.failed, ev.table); break;
-      case "enrich-done": phaseEnd(ev.done); logLine("Enrichment: " + fname2(ev.table) + ", " + num(ev.done) + " enriched" + (ev.failed ? ", " + num(ev.failed) + " failed" : "") + (ev.pending ? ", " + num(ev.pending) + " waiting for Run" : "") + " (" + fmtDur(ev.ms) + (ev.cost ? ", " + aboutMoney(ev.cost) : "") + ")", ev.failed && !ev.done ? "warn" : "ok"); break;
-      case "embed-start": phaseStart("embed", ev.pending, null); logLine("Semantic search: embedding " + num(ev.pending) + " records with " + ev.model + " (" + ev.provider + ")"); break;
-      case "embed-progress": phaseProgress(ev.done, ev.total, ev.ms, ev.cost, 0, null); break;
+      case "enrich-start": ph.enrich.total += Number(ev.pending) || 0; ph.enrich.f = ph.enrich.total ? Math.min(0.99, ph.enrich.done / ph.enrich.total) : 0; phBegin("enrich"); phaseStart("enrich", ev.pending, ev.table); logLine("Enrichment: " + fname2(ev.table) + ", " + num(ev.pending) + " records with " + ev.model); break;
+      case "enrich-progress": { phaseProgress(ev.done, ev.total, ev.ms, ev.cost, ev.failed, ev.table); const d = ph.enrich.done + (Number(ev.done) || 0) + (Number(ev.failed) || 0); phSet("enrich", "run", ph.enrich.total ? Math.min(0.99, d / ph.enrich.total) : 0); break; }
+      case "enrich-done": ph.enrich.done += (Number(ev.done) || 0) + (Number(ev.failed) || 0); phaseEnd(ev.done); logLine("Enrichment: " + fname2(ev.table) + ", " + num(ev.done) + " enriched" + (ev.failed ? ", " + num(ev.failed) + " failed" : "") + (ev.pending ? ", " + num(ev.pending) + " left for the next sync" : "") + " (" + fmtDur(ev.ms) + (ev.cost ? ", " + aboutMoney(ev.cost) : "") + ")", ev.failed && !ev.done ? "warn" : "ok"); break;
+      case "embed-start": ph.embed.total = Number(ev.pending) || 0; phBegin("embed"); phaseStart("embed", ev.pending, null); logLine("Vectors: building " + num(ev.pending) + " with " + ev.model + " (" + ev.provider + ")"); break;
+      case "embed-progress": phaseProgress(ev.done, ev.total, ev.ms, ev.cost, 0, null); phSet("embed", "run", ev.total ? Math.min(0.99, ev.done / ev.total) : 0); break;
       // The pass stopped early (quota, a bad key, the network). One plain
       // sentence on the panel line; the raw error is in a note event.
       case "embed-stopped": { const txt = ev.text || "Semantic search stopped early" + (ev.reason ? ": " + ev.reason : "") + "."; logLine(txt, "warn"); paintNow({ status: "stopped" }); break; }
-      case "embed-done": phaseEnd(ev.done); logLine("Semantic search: vectors built for " + num(ev.done) + " records" + (ev.pending ? ", " + num(ev.pending) + " waiting for Run" : "") + " (" + fmtDur(ev.ms) + (ev.cost ? ", " + aboutMoney(ev.cost) : "") + ")", ev.pending && !ev.done ? "warn" : "ok"); break;
+      case "embed-done": phSet("embed", "done"); phaseEnd(ev.done); logLine("Vectors: built " + num(ev.done) + (ev.pending ? ", " + num(ev.pending) + " left for the next sync" : "") + " (" + fmtDur(ev.ms) + (ev.cost ? ", " + aboutMoney(ev.cost) : "") + ")", ev.pending && !ev.done ? "warn" : "ok"); break;
       case "sample-loaded": logLine("Sample data loaded (" + num(ev.totalRows) + " rows). No FileMaker connection is configured."); break;
       case "pull-start": { const r = rowFor(ev.name, lbl); r.st.textContent = "reading"; r.t0 = Date.now(); paintNow({ table: friendly(ev.name), status: "reading from FileMaker", prog: r.expected ? "0 / " + num(r.expected) : "" }); logLine(fname2(ev.name) + ": reading from FileMaker"); break; }
       case "pull-resumed": { const r = rowFor(ev.name, lbl); r.st.textContent = "resuming"; logLine(fname2(ev.name) + ": continuing from row " + num(ev.fromRow) + " after the restart"); break; }
@@ -730,6 +760,7 @@ function attachSync(tables, opts = {}) {
         if (ev.upToDate || ev.summary?.upToDate) endLine = "Already up to date";
         break;
       case "finished": {
+        phAll("done");
         $("syncOverall").style.width = "100%";
         let summary = endLine;
         if (!summary && stagesOnly) summary = stageSum.total ? num(stageSum.done) + " of " + num(stageSum.total) + " records done" : "nothing to do";
@@ -868,9 +899,9 @@ function showTab(t) {
     $("tabbtn-" + k).classList.toggle("on", k === t);
   }
   activeTab = t;
-  // Data Sources saves itself (Connect persists, file picks persist), so its
-  // bar only closes; Tables and AI have a Save.
-  $("saveAll").style.display = t === "fm" || t === "log" || t === "settings" ? "none" : "";
+  // Only the Tables tab has a button that saves: Save and sync. Every other
+  // tab saves itself the moment something changes, so its bar only closes.
+  $("saveAll").style.display = t === "tables" ? "" : "none";
   if (t === "log") { loadSearchLog(); loadRecordLog(); }
   if (t === "settings") loadAbout();
   // The Tables tab paints its list whenever it is shown and the list is
@@ -886,9 +917,6 @@ function showTab(t) {
 for (const k of TABS) $("tabbtn-" + k).onclick = () => showTab(k);
 $("goDataSources").onclick = () => showTab("fm");
 
-// A table's semantic switch: its saved choice, else what the server proposes, else on.
-// A table that is not in the saved set (not indexed) is never semantic-on.
-const semOn = (raw) => (cfg?.tables && !(raw in cfg.tables)) ? false : (cfg?.tables?.[raw]?.semantic ?? (cfg?.ai?.coverage?.tables || []).find((t) => t.src_table === raw)?.semantic ?? true);
 
 async function openSettings(tab) {
   const wasOpen = $("settings").classList.contains("open");
@@ -925,7 +953,7 @@ async function checkCrash(st) {
 $("openSettings").addEventListener("click", () => openSettings());
 $("closeSettings").addEventListener("click", () => { $("settings").classList.remove("open"); clearInterval(recTimer); });
 // Escape backs out one level: the providers screen, a help window, an
-// enrichment window, then Settings itself.
+// rules window, then Settings itself.
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
   for (const id of ["askOverlay", "destroyOverlay", "helpOverlay", "dropOverlay", "resetOverlay", "provOverlay", "enrichOverlay", "syncConfirmOverlay", "crashOverlay"]) {
@@ -953,6 +981,17 @@ const applyTheme = (choice) => {
   for (const b of document.querySelectorAll("#themeOpt button")) b.classList.toggle("on", b.dataset.theme === choice);
 };
 applyTheme(themeChoice());
+// Date order and auto-sync (General tab) save themselves, like the theme.
+const prefSaved = (msg) => { $("prefNote").textContent = msg; clearTimeout(prefSaved.t); prefSaved.t = setTimeout(() => { $("prefNote").textContent = ""; }, 2500); };
+for (const id of ["dateFormat", "syncEvery"]) {
+  $(id).addEventListener("change", async () => {
+    try {
+      const r = await postJson("/api/config", id === "dateFormat" ? { dateFormat: $(id).value } : { syncEvery: Number($(id).value) });
+      if (r.error) throw new Error(r.error);
+      prefSaved("Saved.");
+    } catch (e) { prefSaved("Not saved: " + (e.message || e)); }
+  });
+}
 document.querySelectorAll("#themeOpt button").forEach((b) => { b.onclick = () => { try { localStorage.setItem("mitos_theme", b.dataset.theme); } catch {} applyTheme(b.dataset.theme); }; });
 if (window.matchMedia) window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => applyTheme(themeChoice()));
 
@@ -1003,11 +1042,11 @@ async function loadConfig() {
       $("scanGate").style.display = cfg.fmConfigured ? "" : "none";
       $("scanFirstNote").style.display = cfg.fmConfigured ? "" : "none";
       $("cardTables").style.display = cfg.fmConfigured ? "none" : "";
-      $("tblNote").textContent = cfg.fmConfigured ? "" : "Running on the bundled sample data. Connect a FileMaker server on the Data Sources tab to search your own tables.";
+      $("tblNote").textContent = cfg.fmConfigured ? "" : "Running on the bundled sample data. Connect a FileMaker server on the Connection tab to search your own tables.";
     }
     scannedAtKnown = cfg.scan?.scannedAt || null;
     renderSaxHints(cfg.hints);
-    paintSemCells();
+    paintCols();
     $("syncEvery").value = String(cfg.syncEvery || 0);
     $("dateFormat").value = cfg.dateFormat === "dmy" ? "dmy" : "mdy";
     $("lastSync").textContent = cfg.index.builtAt ? "last synced " + ago(cfg.index.builtAt) : "";
@@ -1145,7 +1184,7 @@ async function runScan() {
     if (scanAbort) return;
     if (!t.ok) {
       scanLogLine("Connection failed: " + (t.error || "check server, database, and login"), "warn");
-      scanLogLine("Fix the connection (Edit on the Data Sources tab), then scan again.");
+      scanLogLine("Fix the connection (Edit on the Connection tab), then scan again.");
       return;
     }
     scanLogLine(`Connected. ${t.databases.length} database file${t.databases.length === 1 ? "" : "s"} visible.`, "ok");
@@ -1261,7 +1300,7 @@ async function loadTables() {
   $("tblNote").textContent = "loading...";
   try {
     let r = await apiJson("/api/fm/tables");
-    if (r.building) { $("tblNote").textContent = "A scan is running. Open it from the Data Sources tab, or wait here."; while (r.building) { await new Promise((x) => setTimeout(x, 2000)); r = await apiJson("/api/fm/tables"); } }
+    if (r.building) { $("tblNote").textContent = "A scan is running. Open it from the Connection tab, or wait here."; while (r.building) { await new Promise((x) => setTimeout(x, 2000)); r = await apiJson("/api/fm/tables"); } }
     if (r.error) { $("tblNote").textContent = r.error; throw new Error(r.error); }
     scannedTables = r;
     renderScanned();
@@ -1449,24 +1488,60 @@ function slugProblem(raw, word) {
   if (taken[word]) return `"${word}" is already used by ${fname2(taken[word])}. Each table needs its own word.`;
   return "";
 }
-// ---- Per-table semantic search: the vectors each table holds, from the config's coverage.
-const semanticStageOn = () => Boolean(cfg?.ai?.stages?.semantic?.on);
+// ---- Per-table AI: Enrichment and Semantic search are switches in a table's
+// detail panel (click its row). The list only shows status, read-only: notes
+// written and vectors held. A feature is on when any table has it on.
+const covOf = (raw) => (cfg?.ai?.coverage?.tables || []).find((x) => x.src_table === raw);
+const enOnSaved = (raw) => cfg?.tables?.[raw]?.enrich?.on === true;
+const semOnSaved = (raw) => cfg?.tables?.[raw]?.semantic === true;
 function semVectorsOf(raw) {
-  const c = (cfg?.ai?.coverage?.tables || []).find((x) => x.src_table === raw);
+  const c = covOf(raw);
   return { n: Number(c?.vectors ?? c?.embedded ?? 0), bytes: Number(c?.vectorBytes || 0), rows: Number(c?.rows || 0) };
 }
-function paintSemCells() {
+// Row status text and the panel's own counts, from the switches as they stand.
+function paintCols() {
   const list = $("tblList");
-  list.classList.toggle("sem-on", semanticStageOn());
-  for (const cell of list.querySelectorAll(".trow .tsem")) {
-    const sw = cell.querySelector(".tsem-sw"), v = semVectorsOf(cell.dataset.raw);
-    const included = cell.closest(".trow")?.querySelector("input[type=checkbox]")?.checked;
-    // Only a table that is kept (indexed) has a semantic switch; the cell stays, empty, for alignment.
-    cell.style.visibility = included ? "" : "hidden";
-    const nEl = cell.querySelector(".tsem-n");
-    nEl.textContent = !included ? "" : !sw.checked ? "off" : v.n ? v.n.toLocaleString() + (v.bytes ? " · " + fmtBytes(v.bytes) : "") : "none yet";
-    // Apples to apples: vectors are counted against what Mitos holds, while the Records column is FileMaker's count from the last scan.
-    nEl.title = included && v.rows ? `${v.n.toLocaleString()} vectors for ${v.rows.toLocaleString()} records in Mitos. The Records column is FileMaker's count at the last sync.` : "";
+  for (const row of list.querySelectorAll(".trow")) {
+    const raw = row.dataset.table, exp = row._exp;
+    const included = row.querySelector("input[type=checkbox]")?.checked;
+    const enSw = exp?.querySelector(".en-sw"), semSw = exp?.querySelector(".sem-sw");
+    const c = covOf(raw), v = semVectorsOf(raw);
+    const notes = Number(c?.enriched || 0), rows = Number(c?.rows || 0);
+    const bits = [];
+    if (c && (enSw?.checked || notes)) bits.push(`notes ${notes.toLocaleString()}/${rows.toLocaleString()}` + (enSw?.checked ? "" : " (off)"));
+    if (c && (semSw?.checked || v.n)) bits.push(`vectors ${v.n.toLocaleString()}` + (semSw?.checked ? "" : " (off)"));
+    const st = row.querySelector(".tstat");
+    st.textContent = included && c ? bits.join(" · ") : "";
+    st.title = included && c ? `Enrichment notes written: ${notes.toLocaleString()} of ${rows.toLocaleString()} records. Vectors held: ${v.n.toLocaleString()}${v.bytes ? " (" + fmtBytes(v.bytes) + ")" : ""}.` : "";
+    if (exp) {
+      const en = exp.querySelector(".en-stat"), sm = exp.querySelector(".sem-stat");
+      if (en) en.textContent = c ? `${notes.toLocaleString()} of ${rows.toLocaleString()} records have notes` : (enSw?.checked ? "not synced yet" : "");
+      if (sm) sm.textContent = c ? `${v.n.toLocaleString()} vector${v.n === 1 ? "" : "s"}${v.bytes ? " · " + fmtBytes(v.bytes) : ""}` : (semSw?.checked ? "not synced yet" : "");
+    }
+  }
+}
+// A ticked table that is not saved yet says so, and joins the selected group
+// at once, so a fresh tick never looks lost.
+function regroupTables() {
+  const list = $("tblList");
+  const rows = [...list.querySelectorAll(".trow")];
+  if (!rows.length) return;
+  const on = (r) => r.querySelector("input[type=checkbox]")?.checked;
+  const byName = (a, b) => byDisplayName({ name: a.dataset.table, displayName: a.dataset.display }, { name: b.dataset.table, displayName: b.dataset.display });
+  const sel = rows.filter(on).sort(byName), off = rows.filter((r) => !on(r)).sort(byName);
+  list.querySelectorAll(".tgroup").forEach((g) => g.remove());
+  const frag = document.createDocumentFragment();
+  for (const r of sel) frag.append(r, r._exp);
+  if (off.length) {
+    const d = el("div", "tgroup");
+    d.innerHTML = `Not selected <span>${off.length}</span>`;
+    frag.append(d);
+    for (const r of off) frag.append(r, r._exp);
+  }
+  list.appendChild(frag);
+  for (const r of rows) {
+    const pend = r.querySelector(".tpend");
+    if (pend) pend.textContent = on(r) && !(r.dataset.table in (cfg?.tables || {})) ? "syncs on Save" : "";
   }
 }
 function renderTables(tables) {
@@ -1481,8 +1556,7 @@ function renderTables(tables) {
   tables = tables.slice().sort((a, b) => (Number(inc(b)) - Number(inc(a))) || byDisplayName(a, b));
   if (!tables.length) return;
   const th = el("div", "thead");
-  th.innerHTML = `<span class="cb"></span><span class="fill"></span><span class="tnum">Records</span><span class="tnum f">Fields</span><span class="tsem">Semantic</span><span class="tdotw"></span>`;
-  list.classList.toggle("sem-on", semanticStageOn());
+  th.innerHTML = `<span class="cb"></span><span class="fill"></span><span class="tnum">Records</span><span class="tnum f">Fields</span><span class="tstat">AI built so far</span><span class="tdotw"></span>`;
   list.appendChild(th);
   let sepDone = false;
   openRow = null;
@@ -1490,7 +1564,7 @@ function renderTables(tables) {
     // A quiet divider where the included block ends and the rest begins.
     if (!sepDone && !inc(t) && inc(tables[0])) {
       const d = el("div", "tgroup");
-      d.innerHTML = `Not indexed <span>${tables.filter((x) => !inc(x)).length}</span>`;
+      d.innerHTML = `Not selected <span>${tables.filter((x) => !inc(x)).length}</span>`;
       list.appendChild(d); sepDone = true;
     }
     const fname = tableName(t);
@@ -1501,25 +1575,13 @@ function renderTables(tables) {
       : ["off", "Not indexed"];
     const row = el("div", "trow"); row.dataset.table = t.name;
     row.innerHTML = `<input type="checkbox" ${inc(t) ? "checked" : ""}${t.rowIdOnly ? " disabled" : ""}>` +
-      `<span class="tlabel" title="${esc(fname)}${fname !== t.name ? " (" + esc(t.name) + ")" : ""}"><span class="fn">${esc(fname)}</span><span class="rn">${fname !== t.name ? esc(t.name) : ""}</span></span>` +
+      `<span class="tlabel" title="${esc(fname)}${fname !== t.name ? " (" + esc(t.name) + ")" : ""}"><span class="fn">${esc(fname)}</span><span class="rn">${fname !== t.name ? esc(t.name) : ""}</span></span><span class="tpend"></span>` +
       `<span class="tnum">${t.rowCount == null ? "&ndash;" : Number(t.rowCount).toLocaleString()}</span>` +
       `<span class="tnum f">${t.fieldCount ?? ""}</span>` +
-      `<span class="tsem" data-raw="${esc(t.name)}"><input type="checkbox" class="sw tsem-sw" title="Semantic search for this table"${semOn(t.name) === false ? "" : " checked"}><span class="tsem-n"></span></span>` +
+      `<span class="tstat"></span>` +
       `<span class="tdotw"><span class="tdot ${dot[0]}" title="${esc(dot[1])}"></span></span>`;
     row.querySelector("input").addEventListener("click", (e) => e.stopPropagation());
-    row.querySelector("input").addEventListener("change", paintSemCells);
-    // The per-table semantic switch. Off with vectors in place asks first: the
-    // vectors for this table are deleted when Save is pressed.
-    const tsw = row.querySelector(".tsem-sw");
-    row.querySelector(".tsem").addEventListener("click", (e) => e.stopPropagation());
-    tsw.addEventListener("change", async () => {
-      tsw.dataset.touched = "1";
-      paintSemCells();
-      if (tsw.checked) return;
-      const n = semVectorsOf(t.name).n;
-      if (!n) return;
-      if (!await askOnce("Turn off semantic search for " + fname + "?", `Deletes ${n.toLocaleString()} vector${n === 1 ? "" : "s"} for ${fname}. They go when you save, and turning it back on rebuilds them.`, "Turn off", "Cancel")) { tsw.checked = true; paintSemCells(); }
-    });
+    row.querySelector("input").addEventListener("change", () => { regroupTables(); paintCols(); row.scrollIntoView({ block: "nearest" }); });
     // A tick makes a table's word count; every word is checked again.
     row.querySelector("input").addEventListener("change", () => { for (const r of list.querySelectorAll(".trow")) r._exp?._checkSlug?.(); });
     // Disclosure row: click expands the table's own settings in place. One
@@ -1527,7 +1589,11 @@ function renderTables(tables) {
     const exp = el("div", "texp"); exp.style.display = "none";
     const p = t.proposal || {};
     exp.innerHTML =
-      `<div class="texp-rename"><button type="button" class="texp-fold" title="Fold this row (Escape does the same)">&#9662;</button><input class="tname" value="${esc(fname)}" data-real="${esc(t.name)}"><button type="button" class="btn rename-btn" style="font-size:12px;padding:4px 10px">Rename</button><span class="note rename-st"></span></div>` +
+      `<div class="texp-top"><div class="texp-rename"><button type="button" class="texp-fold" title="Fold this row (Escape does the same)">&#9662;</button><input class="tname" value="${esc(fname)}" data-real="${esc(t.name)}"><button type="button" class="btn rename-btn" style="font-size:12px;padding:4px 10px">Rename</button><span class="note rename-st"></span></div>` +
+      `<div class="texp-ai">` +
+        `<label class="aisw"><input type="checkbox" class="sw en-sw"${enOnSaved(t.name) ? " checked" : ""}><span class="aisw-t"><b>Enrichment</b><small>A model writes search notes for each record: other spellings, nicknames, plain words. Searched, never shown.</small><small class="en-stat"></small></span></label>` +
+        `<label class="aisw"><input type="checkbox" class="sw sem-sw"${semOnSaved(t.name) ? " checked" : ""}><span class="aisw-t"><b>Semantic search</b><small class="sem-why">A vector per record, so a description finds the thing: "cheap running shoes".</small><small class="sem-stat"></small></span></label>` +
+      `</div></div>` +
       `<div class="texp-grid">` +
         `<span class="tk">sent to FileMaker as</span><span><input type="text" class="cfg-slug" value="${esc(p.slug || cfg?.slugs?.[t.name] || slugify(fname))}" style="max-width:260px" autocomplete="off" spellcheck="false"><div class="note slug-note">the word your script branches on; lowercase, its own for each table</div></span>` +
         // The primary key comes from a list of the fields that can be one
@@ -1536,8 +1602,44 @@ function renderTables(tables) {
         `<span class="tk">primary key</span><span><input type="text" class="cfg-pk" list="pk-${esc(t.name)}" value="${esc(p.pk || "")}" style="max-width:260px" autocomplete="off"><datalist id="pk-${esc(t.name)}">${keyCandidates(t).map((f) => `<option value="${esc(f)}">`).join("")}</datalist><div class="note pk-note">the field FileMaker finds the record by; pick from the list</div></span>` +
         `<span class="tk">occurrences</span><span>${esc((t.occurrenceNames || []).join(", ") || t.name)}</span>` +
       `</div>` +
+      enrichBlockHtml(t.name) +
       fieldListHtml(t, p) +
       `<div class="texp-done"><button type="button" class="btn row-done">Done</button></div>`;
+    // The two per-table AI switches. They are form state until Save and sync.
+    // Switching one on says what the next sync will build and what it costs
+    // (the gate); Later keeps the switch on and the next sync builds it all.
+    const enSw = exp.querySelector(".en-sw"), semSw = exp.querySelector(".sem-sw");
+    const semWhy = exp.querySelector(".sem-why");
+    const aiKeyCheck = () => {
+      const need = !hasEmbedModel() && !semSw.checked;
+      semSw.disabled = need;
+      semWhy.textContent = need ? "Needs a Google, OpenAI or Voyage key." : 'A vector per record, so a description finds the thing: "cheap running shoes".';
+    };
+    exp._aiKeyCheck = aiKeyCheck;
+    aiKeyCheck();
+    exp.querySelector(".texp-ai").addEventListener("click", (e) => e.stopPropagation());
+    const gate = async (kind, sw) => {
+      const mine = kind === "semantic" ? { [t.name]: { semantic: true } } : { [t.name]: { enrich: { on: true, prompt: exp.querySelector(".en-prompt")?.value.trim() || "" } } };
+      const est = await costFor({ tables: mine });
+      const part = est && (kind === "semantic" ? est.vectors : est.notes);
+      if (!est) return true; // no price to show: the switch stays as it was set
+      if (!part.ready) { sw.checked = false; paintCols(); await askOnce(kind === "semantic" ? "Semantic search needs a key" : "Enrichment needs a key", "Add a key for it on the AI tab first.", "OK", "Close"); return false; }
+      if (!Number(part.rows)) return true;
+      const n = Number(part.rows).toLocaleString();
+      const what = kind === "semantic" ? `builds ${n} vector${Number(part.rows) === 1 ? "" : "s"}` : `writes ${n} note${Number(part.rows) === 1 ? "" : "s"}`;
+      const v = await showSyncConfirm({ title: (kind === "semantic" ? "Semantic search" : "Enrichment") + " for " + fname, html: `<div style="font-weight:600">The next sync ${what}, ${aboutMoney(part.cost)}.</div><div class="note" style="margin-top:10px">Later keeps the switch on; the next sync, timed or Sync now, builds it all.</div>`, go: "Save and sync now", later: true });
+      if (!v) { sw.checked = false; paintCols(); return false; }
+      if (v === "now") saveTablesAndSync("Sync");
+      return true;
+    };
+    enSw.addEventListener("change", async () => { paintCols(); if (enSw.checked) await gate("enrich", enSw); });
+    semSw.addEventListener("change", async () => {
+      paintCols();
+      if (semSw.checked) { await gate("semantic", semSw); aiKeyCheck(); return; }
+      const n = semVectorsOf(t.name).n;
+      if (!n) return;
+      if (!await askOnce("Turn off semantic search for " + fname + "?", `Deletes ${n.toLocaleString()} vector${n === 1 ? "" : "s"} for ${fname}. They go when you save, and turning it back on rebuilds them.`, "Turn off", "Cancel")) { semSw.checked = true; paintCols(); }
+    });
     // The table word is checked as it is typed; Save waits while any is wrong.
     const slugInp = exp.querySelector(".cfg-slug"), slugNote = exp.querySelector(".slug-note");
     const SLUG_HINT = slugNote.textContent;
@@ -1590,7 +1692,8 @@ function renderTables(tables) {
   // Every word checked once the whole list is in place, so a saved
   // duplicate shows before anyone types.
   for (const row of list.querySelectorAll(".trow")) row._exp._checkSlug();
-  paintSemCells();
+  regroupTables();
+  paintCols();
 }
 
 // Search notes (the enrichment stage) per table: a switch and the prompt a
@@ -1606,14 +1709,10 @@ function keyCandidates(t) {
 function enrichBlockHtml(raw) {
   const e = cfg?.tables?.[raw]?.enrich || {};
   const def = cfg?.enrichPromptDefault?.[raw] || "";
-  const cov = (cfg?.ai?.coverage?.tables || []).find((t) => t.src_table === raw);
-  const stageOn = Boolean(cfg?.ai?.stages?.enrich?.on);
-  const st = cov ? `${Number(cov.enriched).toLocaleString()} of ${Number(cov.rows).toLocaleString()} records have notes` : "";
   return `<div class="texp-enrich">` +
-    `<label style="display:flex;align-items:center;gap:8px;margin:0;font-size:13px;color:var(--text)"><input type="checkbox" class="en-on" ${e.on ? "checked" : ""} style="width:15px;height:15px;accent-color:var(--accent);margin:0"> Write search notes for this table with AI` +
-    `<span class="note" style="margin-left:auto">${esc(st)}${!stageOn ? (st ? " · " : "") + "stage is off on the AI tab" : ""}</span></label>` +
+    `<div style="font-size:13px;color:var(--text)">Rules for this table's Enrichment notes</div>` +
     `<textarea class="en-prompt" placeholder="${esc(def)}" spellcheck="false">${esc(e.prompt || "")}</textarea>` +
-    `<div class="note">What the model is told for each record. Blank uses the text shown. The output rules (plain text, nothing invented) are added for you. Notes are written on the next sync.</div>` +
+    `<div class="note">What the model is told for each record. Blank uses the text shown (or the overall rules, if you set them on the AI tab). The output rules (plain text, nothing invented) are added for you. Notes are written on the next sync.</div>` +
     `</div>`;
 }
 
@@ -1650,23 +1749,18 @@ function collectTables() {
       pk: box.querySelector(".cfg-pk").value.trim(),
       textFields,
       displayFields: [...(title ? [title] : []), ...shown],
-      enrich: { on: Boolean(box.querySelector(".en-on")?.checked), prompt: box.querySelector(".en-prompt")?.value.trim() || "" },
+      enrich: { on: Boolean(box.querySelector(".en-sw")?.checked), prompt: box.querySelector(".en-prompt")?.value.trim() || "" },
+      semantic: Boolean(box.querySelector(".sem-sw")?.checked),
     };
-    // The semantic switch goes along once it is saved or touched; an untouched
-    // new table keeps the server's own default.
-    const tsw = row.querySelector(".tsem-sw");
-    if (tsw && (tsw.dataset.touched || cfg?.tables?.[row.dataset.table]?.semantic !== undefined)) tables[row.dataset.table].semantic = tsw.checked;
   }
   return tables;
 }
 
-// Saves the form. The table picks go only when asked (the Tables tab): an
-// AI-tab Save must never change which tables are kept. Returns the server's
+// Saves the form. The table picks go only when asked (the Tables tab). Returns the server's
 // answer; `tables` in it is the saved set.
 async function saveAll(opts = {}) {
   const body = { syncEvery: Number($("syncEvery").value), dateFormat: $("dateFormat").value };
   if (opts.tables) { const tables = opts.tablesObj || collectTables(); if (tables && Object.keys(tables).length) body.tables = tables; }
-  body.ai = collectAi();
   const r = await postJson("/api/config", body);
   if (r.error) throw new Error(r.error);
   return r;
@@ -1751,7 +1845,7 @@ $("syncBtn").addEventListener("click", () => saveTablesAndSync("Sync"));
 // Connect proves the login. Files lists what that login can open (that is a
 // list, not a scan). Scan reads the structure of the chosen files. The AI
 // stages are set before the first sync, so the sync builds what was chosen.
-const WIZ_LABELS = ["Connect", "Files", "API key", "Scan", "Tables", "AI stages", "Sync", "Add to your file"];
+const WIZ_LABELS = ["Connect", "Files", "API key", "Scan", "Tables", "AI options", "Sync", "Add to your file"];
 const WIZ_STEPS = WIZ_LABELS.length;
 const wiz = { open: false, step: 1, prov: "anthropic", connOk: false, filesOk: false, keyOk: false, keySkipped: false, scanOk: false,
               stagesSeen: false, tables: [], picked: new Set(), saved: [], busy: false, waitingScan: false, finishing: false };
@@ -1987,7 +2081,7 @@ async function wizSavePicks() {
   } catch (e) { wizBusy(false); wizLine("wizPickErr", "Could not save the table choice: " + String(e.message || e).slice(0, 300)); }
 }
 
-// step 6: the AI stages, the same switches the AI tab shows, rendered into
+// step 6: AI options, only the While searching switches the AI tab shows, rendered into
 // the wizard by renderStages($("wizStages")) from wizGo.
 
 // step 7: sync
@@ -2209,9 +2303,9 @@ async function loadAbout() {
 // the moment it is entered and saved when it works; no Test button.
 const PROVIDERS = {
   anthropic: { label: "Claude", keyLabel: "Anthropic API key", cfgKey: "anthropicKey", uses: "reads the search, picks the best, writes search notes, names tables" },
-  openai: { label: "OpenAI", keyLabel: "OpenAI API key", cfgKey: "openaiKey", uses: "the same, plus embeddings for similar meaning" },
-  google: { label: "Google", keyLabel: "Google AI (Gemini) API key", cfgKey: "googleKey", uses: "the same, plus embeddings for similar meaning" },
-  voyage: { label: "Voyage", keyLabel: "Voyage API key", cfgKey: "voyageKey", uses: "embeddings for similar meaning only" },
+  openai: { label: "OpenAI", keyLabel: "OpenAI API key", cfgKey: "openaiKey", uses: "the same, plus vectors for similar meaning" },
+  google: { label: "Google", keyLabel: "Google AI (Gemini) API key", cfgKey: "googleKey", uses: "the same, plus vectors for similar meaning" },
+  voyage: { label: "Voyage", keyLabel: "Voyage API key", cfgKey: "voyageKey", uses: "vectors for similar meaning only" },
 };
 let modelList = null;
 // The card shows only the providers that are on: the name and a dot. Green
@@ -2311,26 +2405,21 @@ function renderProviderRows() {
     box.appendChild(row);
   }
 }
-function collectAi() {
-  return { namingModel: pickedModel($("namingModelSel")), stages: collectStages() };
-}
-
-// ---- The search stages: one row each, one switch each. A switch saves
-// itself the moment it is flipped; the model and the numbers save with the
-// ---- The search stages: one row each, one switch each. No numbers on the
-// page (the best values live in the code); the one choice left is how
-// tight Close spellings is. A switch saves itself. Switching on a paid
-// stage is a formal step: it shows what it would cost first.
+// ---- While searching: Close spellings, Understand the question, Best match
+// (with Let AI pick the best match under it). One row each, one switch each,
+// and a switch saves itself. No numbers on the page (the best values live in
+// the code); the one choice left is how tight Close spellings is. The models
+// they use are on the Models card above; Enrichment and Semantic search are
+// switches in a table's detail panel on the Tables tab.
 const FUZZY_STEPS = [["Very tight", 0.96], ["Tight", 0.93], ["Normal", 0.90], ["Loose", 0.87], ["Very loose", 0.84]];
 const STAGES = [
   { name: "fuzzy", label: "Close spellings", desc: "Names typed wrong: a swapped pair, a missing letter, a space in the wrong place. No model, no key, runs with the exact search." },
-  { name: "enrich", label: "Enrichment", desc: "During sync, a fast model writes search notes for each record: other spellings, nicknames, plain words for what it is. Searched, never shown.", model: "chat", paid: true },
-  { name: "semantic", label: "Semantic search", desc: "A vector per record, so a description finds the thing. Semantic matches are listed below the exact ones. Vectors are built during sync.", model: "embedding", paid: true },
-  { name: "understand", label: "Enhanced search: Interpret meaning", desc: "A model turns a sentence like \"new computers since July\" into an exact search: a date range, the word computers, the Product table.", model: "chat" },
-  // Best match is its own switch (a plain rule, no model, no key). AI best
-  // match is the rerank stage, shown under it and only while Best match is on.
+  { name: "understand", label: "Understand the question", desc: "A model turns a sentence like \"new computers since July\" into an exact search: a date range, the word computers, the Product table.", needsKey: true },
+  // Best match is its own switch (a plain rule, no model, no key). Let AI pick
+  // the best match is the rerank stage, shown under it and only while Best
+  // match is on.
   { name: "best", label: "Best match", desc: "Marks one record as the best match when it's clearly the one you meant. No model, no key." },
-  { name: "rerank", label: "Use AI to determine best match", desc: "A fast model reads the short list and names one best match when it is sure. Below its confidence the list stands as the answer.", model: "chat", sub: "best" },
+  { name: "rerank", label: "Let AI pick the best match", desc: "A fast model reads the short list and names one best match when it is sure. Below its confidence the list stands as the answer.", sub: "best", needsKey: true },
 ];
 const HELP = {
   fuzzy: `<h4>What it does</h4><p>The exact search wants each word you type to start a word in the record. Close spellings runs beside it and compares your words to record names with Jaro-Winkler, a string similarity from record-linkage work: a number from 0 to 1 that rewards a shared beginning. It is arithmetic, not AI: the same words give the same answer every time.</p>
@@ -2338,19 +2427,19 @@ const HELP = {
 <h4>The setting</h4><p>How close a name must be. Examples: "murpy" against "murphy" scores 0.97; "whitfeild" against "whitfield" 0.98; "macon iro" against "marvin cook" 0.88, which is junk. Normal (0.90) keeps the first two and drops the third. Looser shows more and wronger; tighter shows only near-exact slips.</p>
 <h4>Speed and cost</h4><p>DuckDB runs the comparison as a compiled function over the whole column, on all cores, after a first-letter gate cuts the candidates: about 80 milliseconds across 95,000 records. Nothing is paid for.</p>
 <h4>FileMaker</h4><p>FileMaker has no Levenshtein or Jaro-Winkler function. A custom function can do it, but it evaluates per record and cannot be used by a Find, so it loops: seconds to minutes on a big table. This is one of the things Mitos brings that the file cannot.</p>`,
-  semantic: `<h4>What it does</h4><p>During sync, every record is turned into a vector: a list of numbers that stands for its meaning, made by an embedding model. When you search, your words become a vector the same way, and the records whose vectors point the same direction are listed under "Semantic matches", below the exact ones. That is how "mid-range digital SLR" finds a camera whose description never says those words.</p>
+  semantic: `<h4>What it does</h4><p>Every record gets a vector: a list of numbers that stands for its meaning, made by a vector model. When you search, your words become a vector the same way, and the records whose vectors point the same direction are listed under "Semantic matches", below the exact ones. That is how "mid-range digital SLR" finds a camera whose description never says those words.</p>
 <h4>What it shows</h4><p>It always shows its nearest records. When even the nearest is a weak match, the heading says "Perhaps you meant" instead, so you know you are looking at nearest, not near.</p>
-<h4>Cost and time</h4><p>One embedding call per record, once. About 75 cents per 100,000 records, and a few minutes. A plain sync embeds only new and changed records, up to 5,000; a bigger job waits for Run on this tab, which shows the count and the price first. Changing the model rebuilds every vector.</p>
-<h4>Where the vectors live</h4><p>In their own file next to the index (mitos-vec.duckdb). Deleting it is the reset; the next sync rebuilds it.</p>`,
+<h4>Cost and time</h4><p>One call per record, once. About 75 cents per 100,000 records, and a few minutes. The vectors are built as part of every sync, all of them, and a sync only touches records that are new or changed. When a build will cost something, Mitos asks first and shows the price. Changing the vector model rebuilds every vector.</p>
+<h4>Where the vectors live</h4><p>In their own file next to the index (mitos-vec.duckdb). Switching a table's Semantic switch off deletes that table's vectors when you save.</p>`,
   enrich: `<h4>What it does</h4><p>During sync, a fast model reads each record and writes search notes for it: other spellings, "Last, First" for a person, nicknames, abbreviations, plain words for what it is. The notes are searched, never shown, and a hit through them says "in the search notes". They also feed the vector, so semantic search sees them too.</p>
-<h4>The rules</h4><p>One overall rules text tells the model what to write. Deeper per-table rules come in a later version. The output rules (plain text, nothing invented) are added for you.</p>
-<h4>Cost and time</h4><p>One model call per ten records, once per record. With Claude Haiku about 30 dollars per 100,000 records. Switching it on opens a window that shows sample notes for your tables and the price before anything runs. A plain sync writes notes for up to 1,000 new records; more waits for Run.</p>`,
+<h4>The rules</h4><p>One overall rules text tells the model what to write; a table can have its own (open its row). The output rules (plain text, nothing invented) are added for you. "Rules for notes" on the AI tab has a preview.</p>
+<h4>Cost and time</h4><p>One model call per ten records, once per record. With Claude Haiku about 30 dollars per 100,000 records. The notes are written as part of every sync, all of them. When a build will cost something, Mitos asks first and shows the price.</p>`,
   understand: `<h4>What it does</h4><p>A fast model reads what you typed and rewrites it in the exact search's own syntax: "people with birthdays in the first half of May" becomes a date range, "inv 2216" becomes 2216, "someone named bob whitfeld or something" becomes bob whitfeld. The exact search then runs again on the rewrite, so every hit still has a reason. Rows you already saw never disappear.</p>
 <h4>When it runs</h4><p>Only for two or more words. A single word, a number, a date, an email or a phone is already understood. About a second with Claude Haiku; the exact list never waits for it. The same words are read once and remembered.</p>
 <h4>Cost</h4><p>A fraction of a cent per search.</p>`,
   best: `<h4>What it does</h4><p>Mitos names one record as the best match, on top of the list, when it is clearly the one you meant. No model and no key: it is a plain rule, so the same words give the same answer every time.</p>
 <h4>The rule</h4><p>For words: every word you typed matches the top record (the start of a word counts, so "ram" matches "Ramen"), and the next record scores well below it. Or an email, phone or number that only one record has. A close spelling can also win when it is far ahead of the rest.</p>
-<h4>When it is off</h4><p>No record is marked as the best match. The list is the answer. AI best match goes with it, since it hangs on this switch.</p>`,
+<h4>When it is off</h4><p>No record is marked as the best match. The list is the answer. Let AI pick the best match goes with it, since it hangs on this switch.</p>`,
   rerank: `<h4>What it does</h4><p>A fast model reads your search and the short list, reorders it, and names one best match when it is sure. That record is shown on top as "Best match, picked by AI". Below its confidence the list stands as the answer, and a tie means a list, never a guess.</p>
 <h4>Without it</h4><p>Mitos still names a best match by rule (the Best match switch above): every word you typed matches the top record and the next one is well behind, or an email, phone or number that only one record has.</p>
 <h4>When it runs</h4><p>Only for word searches with two or more candidates. About a second with Claude Haiku. A fraction of a cent per search.</p>`,
@@ -2413,21 +2502,17 @@ function addJobOptions(sel, models, stage) {
 // The model a menu should land on when nothing is saved: the stage's
 // recommended model, else the first one shown.
 const recommendedPick = (models, stage) => (models.find((m) => m.recommended && m.job === recJob(stage)) || models.find((m) => m.recommended) || models[0] || {}).id || "";
-// An embedding model that can be called now: its provider has a key.
+// A vector model that can be called now: its provider has a key.
 const hasEmbedModel = () => (modelList?.models || []).some((m) => m.kind === "embedding" && m.usable);
 
-// The AI tab's stage list by default; the wizard's AI stages step passes its
-// own container. The paid-passes card belongs to the AI tab only.
+// The While searching list on the AI tab; the wizard's AI options step passes
+// its own container. Each switch saves itself.
 function renderStages(target) {
   const box = target || $("stageList"); box.innerHTML = "";
-  const inTab = box === $("stageList");
   const st = cfg?.ai?.stages || {};
-  const cov = cfg?.ai?.coverage || {};
-  const all = modelList?.models || [];
-  const keys = cfg?.ai?.keys || {};
   const post = async (patch) => { await postJson("/api/config", { ai: { stages: patch } }); await loadConfig(); };
   for (const S of STAGES) {
-    // AI best match hangs under Best match: no switch, no row.
+    // Let AI pick the best match hangs under Best match: no switch, no row.
     if (S.sub && !st[S.sub]?.on) continue;
     const s = st[S.name] || {};
     const row = el("div", "stg" + (S.sub ? " sub" : ""));
@@ -2436,38 +2521,6 @@ function renderStages(target) {
     const nm = el("div", "nm"); nm.textContent = S.label; nm.appendChild(helpBtn(S.name, S.label));
     const ds = el("div", "ds"); ds.textContent = S.desc;
     const ctl = el("div", "ctl");
-    // Semantic search needs a provider that offers embeddings. Without a key
-    // for one: say so, offer the way in, no menu, and the switch stays off.
-    const needsKey = S.name === "semantic" && !hasEmbedModel();
-    if (needsKey) {
-      sw.disabled = !s.on;
-      const msg = el("span"); msg.textContent = "No embedding model found. Add a Google, OpenAI or Voyage key, or refresh the model list.";
-      const add = el("button", "btn"); add.type = "button"; add.textContent = "Add a key"; add.style.fontSize = "12px"; add.style.padding = "4px 10px";
-      add.onclick = openProviders;
-      const rf = el("button", "btn"); rf.type = "button"; rf.textContent = "Refresh the list"; rf.style.fontSize = "12px"; rf.style.padding = "4px 10px";
-      rf.onclick = async () => { rf.disabled = true; rf.textContent = "Refreshing..."; await fillModels(true); };
-      ctl.append(msg, add, rf);
-    } else if (S.model) {
-      const sel = document.createElement("select"); sel.dataset.stage = S.name; sel.dataset.field = "model";
-      const usable = all.filter((m) => (S.model === "embedding" ? m.kind === "embedding" : isChatModel(m)) && (m.usable ?? keys[m.provider]?.configured));
-      // default (id): the server's own pick for this stage, by tier.
-      const o0 = document.createElement("option"); o0.value = ""; o0.textContent = defaultLabel(S.name, s); sel.appendChild(o0);
-      addJobOptions(sel, usable, S.name);
-      const lab = el("span"); lab.textContent = "model"; ctl.append(lab, sel);
-      // A model change on a paid stage is a rebuild: say so, and save only on a yes.
-      modelPicker(sel, async (id) => {
-        if (S.paid && s.on) {
-          const est = await apiJson("/api/ai/estimate").catch(() => null);
-          const n = S.name === "semantic" ? (cov.totalRows || 0) : (est?.enrich?.rows || 0);
-          if (!await askOnce("Change the model?", `Changing the model rebuilds ${S.name === "semantic" ? "every vector" : "the notes"}: ${Number(n).toLocaleString()} records on the next Run.`, "Change it", "Cancel")) { setPicked(sel, s.savedModel || ""); return; }
-        }
-        await postJson("/api/config", { ai: { stages: { [S.name]: { model: id } } } });
-        await loadConfig();
-      });
-      setPicked(sel, s.savedModel || "");
-      const hint = recHint(S.name);
-      if (hint) { const h = el("div", "rec"); h.textContent = hint; ctl.appendChild(h); }
-    }
     if (S.name === "fuzzy") {
       const sel = document.createElement("select");
       for (const [label, v] of FUZZY_STEPS) { const o = document.createElement("option"); o.value = String(v); o.textContent = label; sel.appendChild(o); }
@@ -2476,192 +2529,184 @@ function renderStages(target) {
       sel.onchange = async () => { await postJson("/api/config", { ai: { stages: { fuzzy: { minSim: Number(sel.value) } } } }); await loadConfig(); };
       const lab = el("span"); lab.textContent = "how close"; ctl.append(lab, sel);
     }
-    if (S.model && !needsKey) {
-      const tb = el("button", "btn"); tb.type = "button"; tb.textContent = "Test"; tb.style.fontSize = "12px"; tb.style.padding = "4px 10px";
-      tb.onclick = async () => {
-        status.className = "st"; status.textContent = "testing...";
-        try {
-          const r = await postJson("/api/ai/test", { which: S.name });
-          status.className = "st " + (r.ok ? "ok" : "warn"); status.textContent = r.ok ? r.note : (r.error || "failed");
-        } catch (e) { status.className = "st warn"; status.textContent = e.message; }
-      };
-      ctl.appendChild(tb);
-    }
     // The status line only when it says something the switch does not.
     const status = el("div", "st");
-    if (s.on && !s.ready && !needsKey) { status.className = "st warn"; status.textContent = "on, but cannot run: " + (s.why || "no key") + ". Add the key under Providers."; }
-    else if (s.on && S.name === "semantic") {
-      const sv = semCounts();
-      status.className = "st ok";
-      status.textContent = sv.vectors >= sv.rows ? "Every record already has a vector." : `${sv.vectors.toLocaleString()} of ${sv.rows.toLocaleString()} records have vectors (see Paid passes below)`;
-    }
-    else if (s.on && S.name === "enrich") { status.className = "st ok"; status.textContent = `${Number(cov.enriched || 0).toLocaleString()} records have notes`; }
+    if (s.on && S.needsKey && !s.ready) { status.className = "st warn"; status.textContent = "On, but it cannot run: " + (s.why || "no key") + ". Add a key on the AI tab."; }
     sw.onchange = async () => {
-      // Off is always one click. On is a formal step for the paid stages.
-      if (S.name === "semantic" && !sw.checked) { sw.checked = true; semanticOff(status, sw); return; }
-      if (!sw.checked || !S.paid) {
-        sw.disabled = true;
-        try {
-          // Best match off takes AI best match with it: a model must not go on
-          // reading the list, and being paid for, behind a hidden switch.
-          if (S.name === "best" && !sw.checked) await post({ best: { on: false }, rerank: { on: false } });
-          else await post({ [S.name]: { on: sw.checked } });
-        }
-        catch (e) { status.className = "st warn"; status.textContent = e.message; sw.disabled = false; }
-        return;
+      sw.disabled = true;
+      try {
+        // Best match off takes Let AI pick the best match with it: a model must
+        // not go on reading the list, and being paid for, behind a hidden switch.
+        if (S.name === "best" && !sw.checked) await post({ best: { on: false }, rerank: { on: false } });
+        else await post({ [S.name]: { on: sw.checked } });
       }
-      sw.checked = false;
-      if (S.name === "semantic") semanticOn(status, sw);
-      else openEnrichWindow();
+      catch (e) { status.className = "st warn"; status.textContent = e.message; sw.disabled = false; }
     };
     body.append(nm, ds, ctl, status);
     row.append(sw, body);
     box.appendChild(row);
   }
-  if (inTab) renderPasses();
 }
-function collectStages() { return {}; }
 
-// ---- The paid-pass gate. Switching Semantic search on shows the count and
-// the price, then Run now or Later. Later saves the switch and leaves a
-// banner; a plain sync stays under its cap.
-// A pass cost: under one cent says so; otherwise dollars, two decimals.
+// ---- Money and the one question. A sync that would also write notes or
+// build vectors says so, with the price, BEFORE anything is saved or started.
+// Sync now starts it; Later saves every setting and the next sync (timed or
+// Sync now) builds it all; Cancel saves nothing.
+// A cost: under one cent says so; otherwise dollars, two decimals.
 const money = (n) => { const v = Number(n) || 0; return v > 0 && v < 0.01 ? "less than 1¢" : "$" + v.toFixed(2); };
 const aboutMoney = (n) => { const m = money(n); return m.startsWith("less") ? m : "about " + m; };
 const fmtBytes = (n) => { const b = Number(n) || 0; return b >= 1073741824 ? (b / 1073741824).toFixed(1) + " GB" : b >= 1048576 ? Math.round(b / 1048576).toLocaleString() + " MB" : Math.max(1, Math.round(b / 1024)).toLocaleString() + " KB"; };
-// What the vectors cover right now: only tables with semantic search on count.
-function semCounts() {
-  const cov = cfg?.ai?.coverage || {};
-  const ts = (cov.tables || []).filter((t) => semOn(t.src_table) !== false);
-  if (!ts.length) return { rows: Number(cov.totalRows || 0), vectors: Number(cov.embedded || 0), bytes: 0 };
-  return { rows: ts.reduce((a, t) => a + Number(t.rows || 0), 0), vectors: ts.reduce((a, t) => a + Number(t.vectors ?? t.embedded ?? 0), 0), bytes: ts.reduce((a, t) => a + Number(t.vectorBytes || 0), 0) };
+// What the next sync would also build. `over`: what-if values (the Tables
+// form as it stands, or a new model); none means what is saved.
+async function costFor(over) {
+  try { const r = await postJson("/api/ai/estimate", over || {}); return r && !r.error ? r : null; } catch { return null; }
 }
-const allVectors = () => {
-  const cov = cfg?.ai?.coverage || {};
-  const ts = cov.tables || [];
-  return { n: ts.length ? ts.reduce((a, t) => a + Number(t.vectors ?? t.embedded ?? 0), 0) : Number(cov.embedded || 0), bytes: ts.reduce((a, t) => a + Number(t.vectorBytes || 0), 0) };
-};
-async function setSemantic(on) { await postJson("/api/config", { ai: { stages: { semantic: { on } } } }); await loadConfig(); }
-// Switching ON: with nothing to build the switch just turns on; otherwise the
-// gate shows the count and the price first. The count is the estimate's, never
-// the total row count.
-async function semanticOn(status, sw) {
-  status.className = "st"; status.textContent = "checking...";
-  const est = await apiJson("/api/ai/estimate").catch(() => null);
-  if (!est?.embed) { status.className = "st warn"; status.textContent = "Could not read the price. Try again."; return; }
-  if (!Number(est.embed.rows)) {
-    try { await setSemantic(true); } catch (e) { status.className = "st warn"; status.textContent = e.message; }
-    return;
-  }
-  status.textContent = "";
-  openSemanticGate(est);
-}
-// Switching OFF deletes the vectors (they take room on the disk): ask first,
-// with the server's numbers.
-async function semanticOff(status, sw) {
-  const v = allVectors();
-  const est = await apiJson("/api/ai/estimate").catch(() => null);
-  const cost = Number(est?.embed?.rebuildCost) || (Number(est?.embed?.rows) > 0 ? Number(est.embed.cost) / Number(est.embed.rows) * v.n : 0);
-  const text = v.n
-    ? `Turning off semantic search deletes all ${v.n.toLocaleString()} vectors${v.bytes ? " (" + fmtBytes(v.bytes) + ")" : ""}. Turning it back on rebuilds them${cost ? ", " + aboutMoney(cost) : ""}.`
-    : "Semantic search turns off. There are no vectors to delete.";
-  if (!await askOnce("Turn off semantic search?", text, v.n ? "Turn off and delete" : "Turn off", "Cancel")) { sw.checked = true; return; }
-  sw.disabled = true; status.className = "st"; status.textContent = "Deleting the vectors...";
-  const r = await dzPost("/api/ai/semantic/off", {});
-  if (r.error) { status.className = "st warn"; status.textContent = dzSaid(r); sw.checked = true; sw.disabled = false; return; }
-  await loadConfig();
-  const st2 = document.querySelector('#stageList .stg input[data-stage="semantic"]')?.closest(".stg")?.querySelector(".st");
-  if (st2) { st2.className = "st ok"; st2.textContent = `Deleted ${Number(r.deleted || 0).toLocaleString()} vector${Number(r.deleted) === 1 ? "" : "s"}${r.bytesFreed ? ", freed " + fmtBytes(r.bytesFreed) : ""}.`; }
-}
-async function openSemanticGate(est) {
-  const model = est.embed.model || cfg?.ai?.stages?.semantic?.model || "the default model";
-  const need = Number(est.embed.rows) || 0, cost = Number(est.embed.cost) || 0;
-  $("syncConfirmBody").innerHTML =
-    `<div><strong>Semantic search</strong> builds one vector per record with <strong>${esc(model)}</strong>.</div>` +
-    `<div style="margin-top:10px">${need.toLocaleString()} record${need === 1 ? "" : "s"} need${need === 1 ? "s" : ""} vectors, <strong>${aboutMoney(cost)}</strong> and a few minutes.</div>` +
-    `<div class="note" style="margin-top:10px">Run now builds them all. Later switches the stage on and builds up to 5,000 per sync; the rest waits for Run on the AI tab.</div>`;
-  $("syncConfirmOverlay").querySelector(".p-head strong").textContent = "Semantic search";
-  $("syncConfirmOverlay").classList.add("open");
+// The one confirm window. Resolves "now", "later" or false (Cancel, Escape).
+// `later` false hides that button (nothing to defer).
+function showSyncConfirm({ title, html, go, later }) {
+  $("syncConfirmOverlay").querySelector(".p-head strong").textContent = title;
+  $("syncConfirmBody").innerHTML = html;
   $("syncConfirmCancel").textContent = "Cancel";
-  $("syncConfirmGo").textContent = "Run now";
-  const later = $("syncConfirmLater"); later.style.display = ""; later.textContent = "Later";
-  $("syncConfirmCancel").onclick = () => { $("syncConfirmOverlay").classList.remove("open"); };
-  later.onclick = async () => { $("syncConfirmOverlay").classList.remove("open"); await setSemantic(true); };
-  $("syncConfirmGo").onclick = async () => { $("syncConfirmOverlay").classList.remove("open"); await setSemantic(true); runSync(null, { full: true, stagesOnly: true }); };
-}
-async function renderPasses() {
-  const box = $("passList"); if (!box) return;
-  box.innerHTML = '<div class="note">checking...</div>';
-  const est = await apiJson("/api/ai/estimate").catch(() => null);
-  box.innerHTML = "";
-  if (!est) { box.innerHTML = '<div class="note">could not read the estimate</div>'; return; }
-  const line = (k, v, run) => {
-    const d = el("div", "pass");
-    const kk = el("span", "k"); kk.textContent = k;
-    const vv = el("span"); vv.textContent = v; vv.style.flex = "1";
-    d.append(kk, vv);
-    if (run) { const b = el("button", "btn primary"); b.type = "button"; b.textContent = "Run"; b.style.fontSize = "12px"; b.style.padding = "4px 12px"; b.onclick = run; d.appendChild(b); }
-    box.appendChild(d);
-  };
-  const e = est.embed, n = est.enrich;
-  const runStages = () => runSync(null, { full: true, stagesOnly: true });
-  // Enrichment counts come from the index itself (tables[].notes of
-  // tables[].rows), never from the ledger. Without them, the pending count.
-  const nt = (n.tables || []).filter((t) => t.notes != null);
-  const notes = nt.reduce((a, t) => a + Number(t.notes || 0), 0), rows = nt.reduce((a, t) => a + Number(t.rows || 0), 0);
-  const pending = nt.length ? Math.max(0, rows - notes) : Number(n.rows || 0);
-  let enrichTxt;
-  if (!n.on) enrichTxt = "off";
-  else if (nt.length) enrichTxt = `${notes.toLocaleString()} of ${rows.toLocaleString()} records have notes` + (pending ? ` · ${aboutMoney(n.cost)} for the rest · ${n.model}` : "");
-  else enrichTxt = pending ? `${pending.toLocaleString()} records need notes · ${aboutMoney(n.cost)} · ${n.model}` : "every chosen record has notes";
-  line("Enrichment", enrichTxt, n.on && pending ? runStages : null);
-  line("Semantic search", !e.on ? "off" : !hasEmbedModel() ? "no embedding model found" : e.rows ? `${Number(e.rows).toLocaleString()} records need vectors · ${aboutMoney(e.cost)} · ${e.model}` : "every record has a vector", e.on && e.rows && hasEmbedModel() ? runStages : null);
-  const led = el("div", "ledger");
-  if (!est.passes?.length) led.textContent = "No paid pass has run yet.";
-  else for (const p of est.passes) { const d = el("div"); d.textContent = `${ago(p.at)} · ${p.kind === "embed" ? "vectors" : "notes for " + (p.label || p.table)} · ${Number(p.rows).toLocaleString()} records · ${Math.round((p.ms || 0) / 1000)}s · ${money(p.cost)} · ${p.model}`; led.appendChild(d); }
-  box.appendChild(led);
+  $("syncConfirmGo").textContent = go;
+  $("syncConfirmLater").style.display = later ? "" : "none";
+  $("syncConfirmLater").textContent = "Later";
+  $("syncConfirmOverlay").classList.add("open");
+  return new Promise((resolve) => {
+    const done = (v) => { $("syncConfirmOverlay").classList.remove("open"); resolve(v); };
+    $("syncConfirmCancel").onclick = () => done(false);
+    $("syncConfirmLater").onclick = () => done("later");
+    $("syncConfirmGo").onclick = () => done("now");
+  });
 }
 
-// ---- The enrichment window: model, the overall rules, the tables, a live
-// preview on sample records, the price, then Run now or Later.
+// ---- Models: one select per job, in one list. A pick saves itself. The
+// list is navarre.ai's (the server passes it on). A model that has left that
+// list keeps working: its row says so, and nothing changes until a person
+// picks another.
+const modelBare = (id) => String(id || "").replace(/^(anthropic|openai|google|voyage):/, "");
+// Off the public list: the list was read, and this id is not on it. A model
+// the provider's own list adds (OpenAI's vector models) is not flagged.
+const offList = (id) => {
+  if (!id || !modelList?.source) return false;
+  const b = modelBare(id);
+  return !(modelList.models || []).some((m) => modelBare(m.id) === b);
+};
+async function saveModel(stage, id) {
+  if (stage === "naming") { const r = await postJson("/api/config", { ai: { namingModel: id } }); if (r.error) throw new Error(r.error); }
+  else { const r = await postJson("/api/config", { ai: { stages: { [stage]: { model: id } } } }); if (r.error) throw new Error(r.error); }
+  await loadConfig();
+}
+function renderModels() {
+  const box = $("modelRows"); if (!box) return;
+  box.innerHTML = "";
+  const all = modelList?.models || [], keys = cfg?.ai?.keys || {};
+  const usable = (m) => m.usable ?? keys[m.provider]?.configured;
+  const chat = all.filter((m) => isChatModel(m) && usable(m));
+  const stg = cfg?.ai?.stages || {};
+  const JOBS = [
+    { stage: "naming", label: "Name tables" },
+    { stage: "enrich", label: "Enrichment", rules: true },
+    { stage: "semantic", label: "Vectors" },
+    { stage: "understand", label: "Understand the question" },
+    { stage: "rerank", label: "Let AI pick the best match" },
+  ];
+  for (const J of JOBS) {
+    const row = el("div", "mrow");
+    const lab = el("div", "ml"); lab.textContent = J.label;
+    const mc = el("div", "mc");
+    const note = el("div", "mn");
+    const s = stg[J.stage] || {};
+    const saved = J.stage === "naming" ? (cfg?.ai?.naming?.auto ? "" : (cfg?.ai?.models?.naming || cfg?.ai?.naming?.model || "")) : (s.savedModel || "");
+    const shown = J.stage === "naming" ? (cfg?.ai?.models?.naming || cfg?.ai?.naming?.model || "") : (s.savedModel || s.model || "");
+    row.append(lab, mc);
+    // Vectors need a provider that offers them. Without a key for one: say so, offer the way in.
+    if (J.stage === "semantic" && !hasEmbedModel() && !s.savedModel) {
+      const msg = el("span", "note"); msg.style.minHeight = "0"; msg.textContent = "Needs a Google, OpenAI or Voyage key.";
+      const add = el("button", "btn"); add.type = "button"; add.textContent = "Add a key"; add.style.cssText = "font-size:12px;padding:4px 10px";
+      add.onclick = openProviders;
+      const rf = el("button", "btn"); rf.type = "button"; rf.textContent = "Refresh the list"; rf.style.cssText = "font-size:12px;padding:4px 10px";
+      rf.onclick = async () => { rf.disabled = true; rf.textContent = "Refreshing..."; await fillModels(true); };
+      mc.append(msg, add, rf);
+      box.appendChild(row);
+      continue;
+    }
+    const sel = document.createElement("select");
+    if (J.stage === "naming") {
+      sel.id = "namingModelSel";
+      fillSelect(sel, chat, shown, false, "", "naming");
+    } else {
+      const pool = J.stage === "semantic" ? all.filter((m) => m.kind === "embedding" && usable(m)) : chat;
+      const o0 = document.createElement("option"); o0.value = ""; o0.textContent = defaultLabel(J.stage, s); sel.appendChild(o0);
+      addJobOptions(sel, pool, J.stage);
+    }
+    mc.appendChild(sel);
+    let prev = saved;
+    const apply = async (id) => {
+      note.className = "mn"; note.textContent = "";
+      try {
+        // A new notes or vectors model rebuilds what exists: say what it costs first.
+        if ((J.stage === "enrich" || J.stage === "semantic") && s.on && id !== prev) {
+          const est = await costFor(J.stage === "enrich" ? { enrichModel: id } : { embedModel: id });
+          const part = J.stage === "enrich" ? est?.notes : est?.vectors;
+          if (part?.ready && Number(part.rows) > 0) {
+            const what = J.stage === "enrich" ? `writes the notes again for ${Number(part.rows).toLocaleString()} record${Number(part.rows) === 1 ? "" : "s"}` : `rebuilds ${Number(part.rows).toLocaleString()} vector${Number(part.rows) === 1 ? "" : "s"}`;
+            if (!await askOnce("Change the model?", `Changing the model means the next sync ${what}, ${aboutMoney(part.cost)}.`, "Change it", "Cancel")) { setPicked(sel, prev); return; }
+            await saveModel(J.stage, id); prev = id;
+            return;
+          }
+        }
+        await saveModel(J.stage, id); prev = id;
+      } catch (e) { setPicked(sel, prev); note.className = "mn warn"; note.textContent = e.message || String(e); }
+    };
+    modelPicker(sel, apply);
+    setPicked(sel, J.stage === "naming" ? shown : saved);
+    const tb = el("button", "btn"); tb.type = "button"; tb.textContent = "Test"; tb.style.cssText = "font-size:12px;padding:4px 10px";
+    tb.onclick = async () => {
+      note.className = "mn"; note.textContent = "testing...";
+      try {
+        const r = await postJson("/api/ai/test", { which: J.stage });
+        note.className = "mn " + (r.ok ? "ok" : "warn"); note.textContent = r.ok ? r.note : (r.error || "failed");
+      } catch (e) { note.className = "mn warn"; note.textContent = e.message; }
+    };
+    mc.appendChild(tb);
+    if (J.rules) {
+      const rb = el("button", "btn"); rb.type = "button"; rb.textContent = "Rules for notes"; rb.style.cssText = "font-size:12px;padding:4px 10px";
+      rb.onclick = openEnrichWindow;
+      mc.appendChild(rb);
+    }
+    box.appendChild(row);
+    const chosen = J.stage === "naming" ? (cfg?.ai?.naming?.auto ? "" : shown) : saved;
+    if (chosen && offList(chosen)) {
+      const w = el("div", "mn warn");
+      w.textContent = `${modelBare(chosen)} is no longer on the recommended list. It still works; pick a current model when you can` + (J.stage === "semantic" ? " (that rebuilds the vectors)." : ".");
+      row.appendChild(w);
+    }
+    const hint = recHint(J.stage);
+    if (hint) { const h = el("div", "mn"); h.textContent = hint; row.appendChild(h); }
+    row.appendChild(note);
+  }
+}
+
+// ---- Rules for notes: the one overall rules text, and a preview on sample
+// records of the tables that have Enrichment on. Which tables get notes is the
+// switch in a table's detail panel; the model is on the AI tab.
 async function openEnrichWindow() {
   const o = $("enrichOverlay");
   o.classList.add("open");
   const s = cfg?.ai?.stages?.enrich || {};
-  const all = (modelList?.models || []).filter((m) => isChatModel(m) && (m.usable ?? cfg?.ai?.keys?.[m.provider]?.configured));
-  const sel = $("enModel"); sel.innerHTML = "";
-  const o0 = document.createElement("option"); o0.value = ""; o0.textContent = defaultLabel("enrich", s); sel.appendChild(o0);
-  addJobOptions(sel, all, "enrich");
-  $("enHint").textContent = recHint("enrich");
-  modelPicker(sel, () => {}); // read at Later or Run now
-  setPicked(sel, s.savedModel || "");
   $("enPrompt").value = s.prompt || "";
   $("enPrompt").placeholder = "Blank uses the built-in rules: other spellings and abbreviations people might type, Last, First for a person, nicknames, one plain line saying what it is.";
-  const tl = $("enTables"); tl.innerHTML = "";
-  for (const [raw, t] of Object.entries(cfg?.tables || {})) {
-    const lab = document.createElement("label"); lab.style.cssText = "display:flex;align-items:center;gap:8px;padding:3px 0;font-size:13px;color:var(--text)";
-    const cb = document.createElement("input"); cb.type = "checkbox"; cb.value = raw; cb.checked = Boolean(t.enrich?.on); cb.style.cssText = "width:15px;height:15px;accent-color:var(--accent);margin:0";
-    const cov = (cfg?.ai?.coverage?.tables || []).find((x) => x.src_table === raw);
-    lab.append(cb, document.createTextNode(friendly(raw) + (cov ? ` (${Number(cov.rows).toLocaleString()} records)` : "")));
-    tl.appendChild(lab);
-  }
-  $("enPreview").innerHTML = ""; $("enEstimate").textContent = "";
-  const picked = () => [...tl.querySelectorAll("input:checked")].map((c) => c.value);
-  const estimate = async () => {
-    const rows = picked().reduce((a, raw) => a + Number((cfg?.ai?.coverage?.tables || []).find((x) => x.src_table === raw)?.rows || 0), 0);
-    // The price per million tokens comes from the model list: about 150 tokens
-    // in and 120 out for each record.
-    const mid = pickedModel(sel) || s.defaultModel || cfg?.ai?.defaults?.enrich || "";
-    const mm = (modelList?.models || []).find((m) => m.id === mid);
-    const per = mm && mm.in != null && mm.out != null ? (150 * mm.in + 120 * mm.out) / 1e6 : 0.0003;
-    $("enEstimate").textContent = rows ? `${rows.toLocaleString()} records, ${aboutMoney(rows * per)} with ${mm?.name || mid || "the default model"}, one call per ten records.` : "Pick at least one table.";
+  $("enPreview").innerHTML = ""; $("enSaved").textContent = "";
+  const previewTables = () => {
+    const on = Object.entries(cfg?.tables || {}).filter(([, t]) => t.enrich?.on).map(([raw]) => raw);
+    return on.length ? on : Object.keys(cfg?.tables || {}).slice(0, 2);
   };
-  tl.onchange = estimate; sel.addEventListener("change", estimate); estimate();
+  $("enEstimate").textContent = previewTables().length ? "Tables: " + previewTables().map(friendly).join(", ") + " (a few cents)" : "";
   $("enPreviewBtn").onclick = async () => {
-    const tables = picked(); if (!tables.length) { $("enPreview").innerHTML = '<div class="note">Pick a table first.</div>'; return; }
+    const tables = previewTables(); if (!tables.length) { $("enPreview").innerHTML = '<div class="note">Pick a table first.</div>'; return; }
     $("enPreview").innerHTML = '<div class="note">writing sample notes... (a few cents)</div>';
     try {
-      const r = await postJson("/api/ai/enrich-preview", { tables, prompt: $("enPrompt").value, model: pickedModel(sel) });
+      const r = await postJson("/api/ai/enrich-preview", { tables, prompt: $("enPrompt").value });
       if (r.error) { $("enPreview").innerHTML = `<div class="note" style="color:var(--warn)">${esc(r.error)}</div>`; return; }
       const box = $("enPreview"); box.innerHTML = "";
       for (const t of r.tables) {
@@ -2675,16 +2720,17 @@ async function openEnrichWindow() {
       }
     } catch (e) { $("enPreview").innerHTML = `<div class="note" style="color:var(--warn)">${esc(e.message)}</div>`; }
   };
-  const save = async (on) => {
-    const tables = {};
-    for (const [raw, t] of Object.entries(cfg?.tables || {})) tables[raw] = { ...t, enrich: { on: on && picked().includes(raw), prompt: t.enrich?.prompt || "" } };
-    await postJson("/api/config", { tables, ai: { stages: { enrich: { on, model: pickedModel(sel), prompt: $("enPrompt").value } } } });
-    await loadConfig();
+  $("enSave").onclick = async () => {
+    try {
+      const r = await postJson("/api/config", { ai: { stages: { enrich: { prompt: $("enPrompt").value } } } });
+      if (r.error) throw new Error(r.error);
+      $("enSaved").textContent = "Saved. New notes follow these rules; notes already written stay.";
+      await loadConfig();
+    } catch (e) { $("enSaved").textContent = e.message; }
   };
   $("enCancel").onclick = () => o.classList.remove("open");
-  $("enLater").onclick = async () => { o.classList.remove("open"); await save(true); };
-  $("enRun").onclick = async () => { o.classList.remove("open"); await save(true); runSync(null, { full: true, stagesOnly: true }); };
 }
+
 // ---- "Other...": every model picker ends with it. Chosen, it shows a small
 // text box next to the select; the typed id is added to the list, selected,
 // and handed to the same apply(id) a picked option goes through. apply is
@@ -2737,14 +2783,8 @@ function fillSelect(sel, models, current, allowNone, noneLabel, stage) {
   }
 }
 function fillModelSelects() {
-  const all = modelList?.models || [];
-  const keys = cfg?.ai?.keys || {};
-  // Every enabled provider's chat models, grouped by provider.
-  const chat = all.filter((m) => isChatModel(m) && (m.usable ?? keys[m.provider]?.configured));
-  const cur = cfg?.ai?.models || {};
-  fillSelect($("namingModelSel"), chat, cur.naming || cfg?.ai?.naming?.model, false, "", "naming");
-  $("namingHint").textContent = recHint("naming");
-  modelPicker($("namingModelSel"), () => {}); // read at Save
+  renderModels();
+  document.querySelectorAll("#tblList .trow").forEach((r) => r._exp?._aiKeyCheck?.());
   renderStages();
   // A switch flipped inside the wizard reloads config; its list follows.
   if (wiz.open && wiz.step === 6) renderStages($("wizStages"));

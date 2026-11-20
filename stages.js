@@ -9,7 +9,7 @@ import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import { chat, parseJson, stages, stageReady, estimateCost, EMBED_CAP_PER_SYNC, PROVIDERS } from "./ai.js";
+import { chat, parseJson, stages, stageReady, estimateCost, PROVIDERS } from "./ai.js";
 import { embedTexts, embedInfo, vectorKey } from "./embed.js";
 import {
   normalizeText, rowsNeedingEnrichment, writeEnrichment,
@@ -77,7 +77,9 @@ export function promptFor(table, t, label) {
 }
 
 // tablesCfg: the saved per-table config (needs .enrich = { on, prompt }).
-// `full`: the Run button; a plain sync stops at the quiet cap.
+// Every pending row is written. The only limit is the optional safety
+// ceiling (config ai.stages.enrich.maxRowsPerSync, 0 = none, the default).
+// `full` is accepted and ignored (the old Run button).
 export async function enrichStage({ tablesCfg, labels = {}, onEvent = () => {}, shouldStop = () => false, full = false }) {
   const s = stages().enrich;
   const ready = stageReady("enrich");
@@ -92,12 +94,12 @@ export async function enrichStage({ tablesCfg, labels = {}, onEvent = () => {}, 
     return summary;
   }
   summary.ran = true;
-  let budget = full ? Infinity : (Math.max(0, Number(s.maxRowsPerSync) || 0) || Infinity);
+  let budget = Math.max(0, Number(s.maxRowsPerSync) || 0) || Infinity;
   const concurrency = Math.max(1, Math.min(16, Number(s.concurrency) || 4));
   for (const [table, t] of Object.entries(tablesCfg)) {
     if (!t.enrich?.on) continue;
     if (shouldStop()) break;
-    if (budget <= 0) { onEvent({ type: "note", name: table, note: `enrichment stopped at this sync's cap; press Run on the AI tab for the rest` }); break; }
+    if (budget <= 0) { onEvent({ type: "note", name: table, note: `enrichment stopped at the safety ceiling; the next sync carries on` }); break; }
     const prompt = promptFor(table, t, labels[table]);
     const key = enrichKeyFor(s.model, prompt);
     const rows = await rowsNeedingEnrichment(table, key, Math.min(budget, 100000));
@@ -181,19 +183,19 @@ export function classifyEmbedError(e, provider) {
   const label = PROVIDERS[provider]?.label || provider || "The provider";
   const project = provider === "google" ? "Enable billing on the Google AI project" : `Add credit to the ${label} account`;
   if (status === 429 || /quota|resource.?exhausted|insufficient_quota|rate.?limit|billing/i.test(msg)) {
-    return { reason: "quota", text: `${label} refused this key: quota exceeded. ${project}, then Run again.` };
+    return { reason: "quota", text: `${label} refused this key: quota exceeded. ${project}, then sync again.` };
   }
   if (status === 401 || status === 403 || /invalid.?api.?key|unauthori[sz]ed|permission|api key not valid|authentication/i.test(msg)) {
-    return { reason: "auth", text: `${label} refused this key. Check the key on the AI tab, then Run again.` };
+    return { reason: "auth", text: `${label} refused this key. Check the key on the AI tab, then sync again.` };
   }
   if (/fetch failed|timeout|timed out|abort|ECONN|ENOTFOUND|EAI_AGAIN|network|socket/i.test(msg)) {
-    return { reason: "network", text: `${label} did not answer. Check the connection, then Run again.` };
+    return { reason: "network", text: `${label} did not answer. Check the connection, then sync again.` };
   }
-  return { reason: "other", text: `Semantic search stopped: ${msg.replace(/\s+/g, " ").slice(0, 80)}. Run again to continue.` };
+  return { reason: "other", text: `Semantic search stopped: ${msg.replace(/\s+/g, " ").slice(0, 80)}. Sync again to continue.` };
 }
 
-// `full`: the Run button; a plain sync embeds at most EMBED_CAP_PER_SYNC
-// rows (new and changed ones) and leaves the rest for a Run.
+// Every row that needs a vector gets one; the only limit is the optional
+// safety ceiling (config ai.stages.semantic.maxRowsPerSync, 0 = none).
 // `tables`: the beacon's case, only those tables' rows.
 export async function embedStage({ labels = {}, onEvent = () => {}, shouldStop = () => false, full = false, tables = null }) {
   // Vectors whose record left the index go first, whatever else happens:
@@ -215,8 +217,8 @@ export async function embedStage({ labels = {}, onEvent = () => {}, shouldStop =
   if (recreated) onEvent({ type: "note", note: `vectors set to ${info.dims} numbers; every record is re-embedded` });
   const total = await countNeedingVectors(key, tables);
   if (!total) return summary;
-  const cap = full ? Infinity : EMBED_CAP_PER_SYNC;
-  if (total > cap) onEvent({ type: "note", note: `${total.toLocaleString()} records need vectors; this sync does ${cap.toLocaleString()}, press Run on the AI tab for the rest` });
+  const cap = Math.max(0, Number(stages().semantic.maxRowsPerSync) || 0) || Infinity;
+  if (total > cap) onEvent({ type: "note", note: `${total.toLocaleString()} records need vectors; this sync does ${cap.toLocaleString()} (the safety ceiling), the next one carries on` });
   onEvent({ type: "embed-start", pending: Math.min(total, cap), model: info.model, provider: info.provider });
   const t0 = Date.now();
   let done = 0, tokens = 0;

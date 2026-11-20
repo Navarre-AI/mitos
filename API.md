@@ -33,11 +33,15 @@ name, the site password as the password). Without one, `/api/` answers 401
   trigger through Perform Script on Server, so no "Transferring URL" shows.
   Unknown tables and records FileMaker no longer has show in the Log tab
   under Record updates. The timed sync still runs as the safety net.
-- `POST /api/index/sync` with `{ full: true }` runs the paid passes without
-  their per-sync caps. `GET /api/ai/estimate` says what a Run would do and
-  cost, and lists past passes. `POST /api/ai/enrich-preview` writes sample
+- `GET /api/ai/estimate` says what the pending Enrichment and Vectors would
+  cost, and lists past passes. `POST /api/ai/estimate` is the what-if: send
+  the tables and models you are thinking about, get the count and price
+  without saving anything. `POST /api/ai/enrich-preview` writes sample
   notes for a few records without saving.
-- `POST /api/index/sync` starts a build; `GET /api/index/stream` is the SSE
+- `POST /api/index/sync` starts a sync: data, then Enrichment, then Vectors,
+  every pending record. (`full` and `stagesOnly` still exist; the page no
+  longer sends them.) The Enrichment and Vectors switches are per table in
+  `POST /api/config`. `GET /api/index/stream` is the SSE
   progress feed; `POST /api/index/cancel` stops it; `GET /api/index/status`
   shows counts.
 - `GET /api/fm/tables` returns the cached scan, or `{ building: true }` while
@@ -45,7 +49,7 @@ name, the site password as the password). Without one, `/api/` answers 401
   it); `?rename=1` re-runs the naming pass. `POST /api/config` saves the
   table choice. `POST /api/schema/saxml` uploads a Save-a-Copy-as-XML file.
 - `GET /api/records/log` lists what the record-by-record route did, newest
-  first. `GET /api/about` describes this machine (Settings tab).
+  first. `GET /api/about` describes this machine (General tab).
 - `POST /api/reset` (`items`: any of index, copies, notes, config, keys,
   logs, sessions), `POST /api/tables/drop` (`{ table }`) and `POST
   /api/ai/semantic/off` are the Danger zone's calls.

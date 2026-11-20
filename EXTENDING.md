@@ -40,7 +40,7 @@ Break either and Mitos becomes a chatbot that guesses.
 | `fm.js` | Every FileMaker call. Nothing else opens a connection. Read `GOTCHAS.md` before editing it. |
 | `ai.js` | `PROVIDERS`, `providerOf`, the keys, `chat()` (one door, three providers), `STAGE_DEFAULTS`, `STAGE_LIMITS`, `stages()`, `stageReady()`, `PRICES`. |
 | `embed.js` | `embedTexts()` and `embedQuery()`: three providers, batched, retried, unit vectors. |
-| `stages.js` | `enrichStage()`, `embedStage()`, `classifyEmbedError()`, the paid-pass ledger. |
+| `stages.js` | `enrichStage()`, `embedStage()`, `classifyEmbedError()`, the pass ledger. |
 | `understand.js`, `rerank.js` | The two search-time model stages, each a prompt, a parser and a cache. |
 | `naming.js`, `names.js` | The naming pass and the one display-name map. |
 | `public/app.js` | The page: the two-phase fetch with `AbortController`, the result rows, Settings, the stage rows (`stageList`, `wizStages`), the sync overlay, the wizard. |
@@ -77,14 +77,15 @@ The five stages share one shape, and a sixth follows it. (Best match is a plain 
    remove an exact row. `activeStages()` decides whether it runs
    (`?stages=` overrides the switches for the eval and the simulator). An
    index-time stage goes in `runStages()` in `indexer.js`, follows
-   `enrichStage()` (incremental by a key, capped on a plain sync, stops on
+   `enrichStage()` (incremental by a key, builds every pending row unless `maxRowsPerSync` is set, stops on
    `shouldStop()` between batches, reports through `onEvent`), and appends
    to the ledger with `appendPass()` when it costs money.
 3. **The screen.** `public/app.js` renders one row per stage from the
    server's `stages` with a switch that saves itself, a model picker, a
    "?" help text, and a Test button that calls `POST /api/ai/test` with
    `which=<name>`; add the case there in `server.js`. A stage that costs
-   money on a sync goes behind the paid-pass gate (`/api/ai/estimate`).
+   money on a sync gets a per-table switch with a count-and-price confirm
+   (`/api/ai/estimate`).
 4. **Say what it is not.** A new stage may add rows below the exact list,
    reorder rows, or annotate them. It may not invent display values.
 

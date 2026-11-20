@@ -231,7 +231,7 @@ Now:
 
 What happened: `enrichStage` cleared the notes of every table whose enrich
 switch was off, and of every table when the stage was off, on every sync. A
-switch flipped by mistake threw a paid pass away.
+switch flipped by mistake threw paid work away.
 
 Now: a switch off only stops writing and matching. The notes stay. The search
 matches `enrich_norm` only for tables whose switch is on while the stage is on

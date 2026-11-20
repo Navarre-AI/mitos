@@ -230,14 +230,23 @@
   .tnum.f { width:52px; }
   .tdotw { width:26px; flex:none; display:flex; justify-content:center; }
   /* Per-table semantic search: a switch and the vectors it holds. Shown only while the stage is on. */
-  .tsem { width:128px; flex:none; display:none; align-items:center; gap:8px; font-size:11.5px; color:var(--dim); font-variant-numeric:tabular-nums; white-space:nowrap; }
-  #tblList.sem-on .tsem { display:flex; }
+  .tstat { width:178px; flex:none; font-size:11.5px; color:var(--dim); font-variant-numeric:tabular-nums; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .thead .tstat { font-size:10.5px; }
+  .tpend { font-size:11px; color:var(--accent); white-space:nowrap; flex:none; }
+  .texp-top { display:flex; gap:18px; align-items:flex-start; flex-wrap:wrap; justify-content:space-between; }
+  .texp-top .texp-rename { flex:1 1 180px; min-width:0; }
+  .texp-ai { flex:0 1 340px; margin-top:8px; display:flex; flex-direction:column; gap:8px; }
+  .aisw { display:flex; gap:10px; align-items:flex-start; margin:0; cursor:pointer; color:var(--text); font-size:13px; }
+  .aisw-t { display:flex; flex-direction:column; gap:1px; min-width:0; }
+  .aisw-t b { font-weight:600; }
+  .aisw-t small { color:var(--dim); font-size:11.5px; line-height:1.35; }
+  .aisw-t small:empty { display:none; }
+  .aisw input.sw { appearance:none; -webkit-appearance:none; width:34px; height:19px; border-radius:10px; background:var(--line); position:relative; cursor:pointer; flex:none; margin:1px 0 0; transition:background .15s; }
+  .aisw input.sw::after { content:""; position:absolute; top:2px; left:2px; width:15px; height:15px; border-radius:50%; background:var(--text); transition:left .15s; }
+  .aisw input.sw:checked { background:var(--accent); }
+  .aisw input.sw:checked::after { left:17px; }
+  .aisw input.sw:disabled { opacity:.45; cursor:default; }
   #tblList.sem-on .tlabel { min-width:100px; }
-  .thead .tsem { font-size:10.5px; }
-  .trow .tsem input.sw { appearance:none; -webkit-appearance:none; width:30px; height:17px; border-radius:9px; background:var(--line); position:relative; cursor:pointer; flex:none; margin:0; transition:background .15s; }
-  .trow .tsem input.sw::after { content:""; position:absolute; top:2px; left:2px; width:13px; height:13px; border-radius:50%; background:var(--text); transition:left .15s; }
-  .trow .tsem input.sw:checked { background:var(--accent); }
-  .trow .tsem input.sw:checked::after { left:15px; }
   /* Log tab: record updates, problems first and red. */
   .tabs button .tbadge { display:inline-block; min-width:18px; padding:0 6px; margin-left:6px; border-radius:9px; background:var(--bad); color:#fff; font-size:11px; font-weight:600; line-height:18px; text-align:center; }
   .rrow { display:flex; gap:12px; padding:7px 0; border-top:1px solid var(--line); font-size:13px; align-items:baseline; }
@@ -388,13 +397,33 @@
   .cmdbox { display:flex; align-items:center; gap:10px; border:1px solid var(--line); border-radius:8px; background:var(--bg); padding:10px 12px; margin:10px 0; }
   .cmdbox code { flex:1; min-width:0; font:13px ui-monospace,SFMono-Regular,Menlo,monospace; user-select:all; -webkit-user-select:all; word-break:break-all; }
   /* Stage rows: the AI best match sits under Best match */
+  /* The three phases of a sync: Data, Enrichment, Vectors */
+  .ph { display:inline-flex; flex-direction:column; gap:2px; min-width:64px; }
+  .ph i { font-style:normal; font-size:10px; color:var(--dim); line-height:1; }
+  .ph.run i { color:var(--text); }
+  .ph b { display:block; height:4px; border-radius:2px; background:var(--line); overflow:hidden; }
+  .ph u { display:block; height:100%; background:var(--accent); text-decoration:none; transition:width .3s; }
+  .ph.done u { background:var(--ok); }
+  .ss-ph { display:inline-flex; gap:8px; flex:none; align-items:flex-end; }
+  .phases { display:flex; gap:14px; margin:4px 0 0; } .phases .ph { flex:1; } .phases .ph i { font-size:11.5px; }
+  .phases .ph b { height:6px; }
+  /* Models: one row per job, label left, select right */
+  .mrow { display:grid; grid-template-columns:190px 1fr; gap:4px 14px; align-items:start; padding:9px 0; border-top:1px solid var(--line); }
+  .mrow:first-child { border-top:0; }
+  .mrow .ml { font-size:13.5px; font-weight:600; padding-top:5px; }
+  .mrow .mc { display:flex; flex-wrap:wrap; gap:8px; align-items:center; min-width:0; }
+  .mrow .mc select { width:auto; max-width:100%; padding:5px 8px; font-size:12.5px; }
+  .mrow .mn { grid-column:2; font-size:12px; color:var(--dim); }
+  .mrow .mn.warn { color:var(--warn); }
+  .mrow .mn.ok { color:var(--ok); }
+  @media (max-width:640px) { .mrow { grid-template-columns:1fr; } .mrow .mn { grid-column:1; } }
   .stg.sub { margin-left:46px; border-top:1px dashed var(--line); }
   .stg .rec { color:var(--dim); font-size:12px; flex-basis:100%; }
 </style>
 </head>
 <body>
 <!-- The sync strip: a sync keeps running when its window is closed; this line shows how far it got. -->
-<div id="syncStrip" role="status"><span class="ss-dot"></span><span class="ss-txt" id="syncStripText"></span><button class="ss-btn" id="syncStripLink" type="button">Watch</button><button class="ss-btn" id="syncStripOk" type="button" style="display:none">OK</button><span class="ss-fill" id="syncStripFill"></span></div>
+<div id="syncStrip" role="status"><span class="ss-dot"></span><span class="ss-txt" id="syncStripText"></span><span class="ss-ph" id="syncStripPh"></span><button class="ss-btn" id="syncStripLink" type="button">Watch</button><button class="ss-btn" id="syncStripOk" type="button" style="display:none">OK</button><span class="ss-fill" id="syncStripFill"></span></div>
 <div class="wrap">
   <h1>Mitos <span class="thread">&#x2E31;&mdash;&#x2E31;</span></h1>
   <p class="tag">The thread through your database. One field, any table, the right record.</p>
@@ -425,17 +454,17 @@
   </span>
 </div>
 
-<!-- Settings: three tabs plus the search log. Data Sources saves itself
-     (Connect persists the connection); Tables and AI save with the button. -->
+<!-- Settings: Connection, Tables, AI, Log, General. Only Tables has a button
+     that saves (Save and sync); everything else saves itself. -->
 <div class="overlay" id="settings">
   <div class="panel">
     <div class="p-head"><strong>Settings</strong><span id="setSub" style="color:var(--dim);font-size:12.5px"></span></div>
     <div class="tabs">
-      <button id="tabbtn-fm" type="button" class="on">Data Sources</button>
+      <button id="tabbtn-fm" type="button" class="on">Connection</button>
       <button id="tabbtn-tables" type="button">Tables</button>
       <button id="tabbtn-ai" type="button">AI</button>
       <button id="tabbtn-log" type="button">Log<span class="tbadge" id="logBadge" style="display:none"></span></button>
-      <button id="tabbtn-settings" type="button">Settings</button>
+      <button id="tabbtn-settings" type="button">General</button>
     </div>
     <div class="p-list">
 
@@ -486,34 +515,18 @@
           <div id="saxTimes" class="note" style="margin-top:4px"></div>
           <div id="saxFiles" style="margin-top:8px"></div>
         </div>
-        <div class="card">
-          <h3>Search settings</h3>
-          <div class="set-row">
-            <span style="font-size:13px">Dates typed in the search field are read as</span>
-            <select id="dateFormat" title="How a typed date is read when both parts fit a month">
-              <option value="mdy">month/day/year</option>
-              <option value="dmy">day/month/year</option>
-            </select>
-          </div>
-        </div>
       </div>
 
       <div id="tab-tables" style="display:none">
         <div class="note" id="nameBanner" style="display:none;border:1px solid var(--line);border-radius:10px;padding:10px 14px;margin:12px 0;font-size:13px"></div>
         <div class="card" id="scanFirstNote" style="display:none">
-          <p class="intro" style="margin:0">Nothing scanned yet. Connect and scan on the <b>Data Sources</b> tab, then pick tables here. <button class="btn" type="button" id="goDataSources" style="margin-left:8px">Go to Data Sources</button></p>
+          <p class="intro" style="margin:0">Nothing scanned yet. Connect and scan on the <b>Connection</b> tab, then pick tables here. <button class="btn" type="button" id="goDataSources" style="margin-left:8px">Go to Connection</button></p>
         </div>
         <div class="card" id="cardTables">
           <div class="tblbar">
             <h3 style="margin:0">Tables <span class="hint">check to index &middot; uncheck to remove</span></h3>
             <span class="grow"></span>
             <span class="note" id="lastSync"></span>
-            <select id="syncEvery">
-              <option value="0">Auto-sync off</option>
-              <option value="60">Hourly</option>
-              <option value="360">Every 6 hours</option>
-              <option value="1440">Daily</option>
-            </select>
             <button class="btn" id="syncBtn">&#8635; Sync now</button>
           </div>
           <div class="note" id="tblNote"></div>
@@ -529,35 +542,23 @@
           <button class="link" id="keyStepSkip" type="button" style="margin-left:10px">Skip for now</button></div>
         </div>
         <div class="card">
-          <h3>Appearance</h3>
-          <div class="set-row" style="gap:12px"><span class="note" style="min-height:0">Light or dark</span>
-            <div class="themeopt" id="themeOpt"><button type="button" data-theme="system">System</button><button type="button" data-theme="light">Light</button><button type="button" data-theme="dark">Dark</button></div>
-          </div>
-        </div>
-        <div class="card">
-          <h3>AI providers <span class="hint">the accounts Mitos may call</span></h3>
+          <h3>Keys <span class="hint">the accounts Mitos may call</span></h3>
           <!-- Any number of providers can be configured at once. The card
                shows which are; keys and switches live behind Edit, on a
                screen with room for one row per provider. -->
-          <div class="field" style="margin-bottom:12px"><span>Providers</span>
-            <div class="set-row" style="gap:8px">
-              <div id="provSummary" style="display:flex;gap:8px;flex-wrap:wrap"></div>
-              <button class="btn" id="provEdit" type="button">Edit</button>
-            </div>
-          </div>
-          <div class="field" style="margin-bottom:2px" id="namingField"><span>Model that names your tables at scan time</span>
-            <select id="namingModelSel" style="width:auto"></select>
-            <span class="note" id="namingHint" style="min-height:0"></span>
+          <div class="set-row" style="gap:8px">
+            <div id="provSummary" style="display:flex;gap:8px;flex-wrap:wrap"></div>
+            <button class="btn" id="provEdit" type="button">Edit</button>
           </div>
         </div>
         <div class="card">
-          <h3>Search stages <span class="hint">each one is its own switch; the exact search never waits for them</span></h3>
+          <h3>Models <span class="hint">one for each job; a pick saves itself</span></h3>
+          <div id="modelRows"></div>
+        </div>
+        <div class="card">
+          <h3>While searching <span class="hint">each is its own switch; the exact search never waits for them</span></h3>
           <p class="intro">Exact, type-aware search always runs first and shows at once. These add to it, one at a time, and each can be switched off when it misbehaves. A switch saves itself.</p>
           <div id="stageList"></div>
-        </div>
-        <div class="card">
-          <h3>Paid passes <span class="hint">what a Run would do now, and what has run</span></h3>
-          <div id="passList"></div>
         </div>
       </div>
 
@@ -575,6 +576,27 @@
       </div>
 
       <div id="tab-settings" style="display:none">
+        <div class="card" id="prefCard">
+          <h3>Preferences</h3>
+          <div class="set-row" style="gap:12px;padding:6px 0"><span style="font-size:13px">Light or dark</span><span class="sp"></span>
+            <div class="themeopt" id="themeOpt"><button type="button" data-theme="system">System</button><button type="button" data-theme="light">Light</button><button type="button" data-theme="dark">Dark</button></div>
+          </div>
+          <div class="set-row" style="gap:12px;padding:6px 0"><span style="font-size:13px">Date order, for dates you type in the search box</span><span class="sp"></span>
+            <select id="dateFormat" title="How a typed date is read when both parts fit a month">
+              <option value="mdy">month/day/year</option>
+              <option value="dmy">day/month/year</option>
+            </select>
+          </div>
+          <div class="set-row" style="gap:12px;padding:6px 0"><span style="font-size:13px">Auto-sync</span><span class="sp"></span>
+            <select id="syncEvery">
+              <option value="0">Off</option>
+              <option value="60">Hourly</option>
+              <option value="360">Every 6 hours</option>
+              <option value="1440">Daily</option>
+            </select>
+          </div>
+          <div class="note" id="prefNote" style="min-height:16px;margin-top:2px"></div>
+        </div>
         <div class="card" id="aboutCard">
           <h3>This Mitos <span class="hint">where it runs and what it holds</span></h3>
           <div class="about-grid" id="aboutGrid"><span class="k">&nbsp;</span><span class="v">loading...</span></div>
@@ -609,7 +631,7 @@
       <span class="note" id="saveNote"></span>
       <span class="sp"></span>
       <button class="btn" id="closeSettings">Close</button>
-      <button class="btn primary" id="saveAll">Save</button>
+      <button class="btn primary" id="saveAll">Save and sync</button>
     </div>
   </div>
 </div>
@@ -645,7 +667,7 @@
         <div class="wiz-err" id="wizFilesErr"></div>
       </div>
       <div class="wiz-body" data-wstep="3" style="display:none">
-        <p class="wiz-why">Mitos uses your own API key for two things: naming your tables at scan time, and the AI stages you switch on later (Enhanced search, Semantic search, Enrichment, AI best match). With every stage off, search makes no API call. The key is stored on your server, and you can change it any time in Settings.</p>
+        <p class="wiz-why">Mitos uses your own API key for two things: naming your tables at scan time, and the AI options you switch on later (Enrichment, Semantic search, Understand the question, Let AI pick the best match). With every option off, search makes no API call. The key is stored on your server, and you can change it any time in Settings.</p>
         <div class="set-row" style="gap:16px;align-items:flex-end;margin-bottom:4px">
           <div>
             <div style="font-size:12.5px;color:var(--dim);margin-bottom:5px">Provider</div>
@@ -679,7 +701,7 @@
         <div class="wiz-err" id="wizPickErr"></div>
       </div>
       <div class="wiz-body" data-wstep="6" style="display:none">
-        <p class="wiz-why">Exact, type-aware search always runs. These stages add to it, one at a time. Each one is its own switch, and a switch saves itself. You can change them later on the AI tab in Settings.</p>
+        <p class="wiz-why">Exact, type-aware search always runs. These add to it while you search, one at a time. Each one is its own switch, and a switch saves itself. Enrichment and Semantic search are switched on per table: click a table on the Tables tab. You can change all of it later in Settings.</p>
         <div id="wizStages"></div>
       </div>
       <div class="wiz-body" data-wstep="7" style="display:none">
@@ -725,6 +747,7 @@
     </div>
     <div class="p-list" style="padding:12px 18px;overflow-y:auto">
       <div class="sync-banner" id="syncBackgroundNote"><span>You don't have to wait. The sync keeps going, and a bar at the top shows how far it got.</span><button class="btn primary" id="syncKeepWorking" type="button">Keep working</button></div>
+      <div class="phases" id="syncPhases"></div>
       <div class="sync-overall"><div id="syncOverall"></div></div>
       <div class="sync-now" id="syncNow">
         <div class="sn-top"><span class="sn-tbl" id="syncNowTable"></span><span class="sn-st" id="syncNowStatus"></span><span class="sn-prog" id="syncNowProg"></span></div>
@@ -752,7 +775,7 @@
      the provider out of every list. -->
 <div class="overlay" id="provOverlay">
   <div class="panel" style="width:min(720px,94vw)">
-    <div class="p-head"><strong>AI providers</strong><span class="note">a key is tested and saved as you enter it</span></div>
+    <div class="p-head"><strong>Keys</strong><span class="note">a key is tested and saved as you enter it</span></div>
     <div class="p-list" id="provRows" style="padding:4px 18px 12px"></div>
     <div class="p-foot"><span class="note" id="provNote"></span><span class="sp"></span><button class="btn primary" id="provDone">Done</button></div>
   </div>
@@ -762,7 +785,7 @@
   <div class="panel" style="width:clamp(460px,38vw,760px);max-width:96vw;max-height:calc(100vh - 56px)">
     <div class="p-head"><strong>Ready to sync</strong></div>
     <div class="p-list" style="padding:12px 18px;font-size:13.5px" id="syncConfirmBody"></div>
-    <div class="p-foot"><span class="sp"></span><button class="btn" id="syncConfirmCancel">Cancel</button><button class="btn" id="syncConfirmLater" style="display:none">Later</button><button class="btn primary" id="syncConfirmGo">Start sync</button></div>
+    <div class="p-foot"><span class="sp"></span><button class="btn" id="syncConfirmCancel">Cancel</button><button class="btn" id="syncConfirmLater" style="display:none">Later</button><button class="btn primary" id="syncConfirmGo">OK</button></div>
   </div>
 </div>
 
@@ -784,22 +807,19 @@
   </div>
 </div>
 
-<!-- Enrichment: switching it on is a formal step. Model, rules, tables, a
-     live preview, the price, then Run now or Later. -->
+<!-- Rules for Enrichment: the one overall rules text, and a preview on
+     sample records. Which tables get notes is the switch in a table's
+     detail panel; the model is on the AI tab. -->
 <div class="overlay" id="enrichOverlay">
   <div class="panel" style="width:min(820px,94vw)">
-    <div class="p-head"><strong>Enrichment</strong><span class="note">a fast model writes search notes for each record, once</span></div>
+    <div class="p-head"><strong>Rules for Enrichment notes</strong><span class="note">what the model is told for each record</span></div>
     <div class="p-list" style="padding:8px 18px 14px">
-      <div class="frow">
-        <div class="field" style="margin-bottom:10px;min-width:260px"><span>Model</span><select id="enModel" style="width:auto"></select><span class="note" id="enHint" style="min-height:0"></span></div>
-      </div>
-      <div class="field" style="margin-bottom:10px"><span>Rules for the notes</span><textarea id="enPrompt" rows="4" spellcheck="false" style="font-size:13px"></textarea>
-        <span class="note">One rule set for every table in this version. The output rules (plain text, nothing invented) are added for you.</span></div>
-      <div class="field" style="margin-bottom:10px"><span>Tables</span><div id="enTables"></div></div>
+      <div class="field" style="margin-bottom:10px"><span>Rules</span><textarea id="enPrompt" rows="5" spellcheck="false" style="font-size:13px"></textarea>
+        <span class="note">One rule set for every table. A table can have its own: open its row on the Tables tab. The output rules (plain text, nothing invented) are added for you.</span></div>
       <div class="btns" style="margin-top:4px"><button class="btn" id="enPreviewBtn" type="button">Preview on two records per table</button><span class="note" id="enEstimate"></span></div>
       <div id="enPreview" style="margin-top:8px"></div>
     </div>
-    <div class="p-foot"><span class="note">Later switches it on and writes up to 1,000 notes per sync; Run now writes them all.</span><span class="sp"></span><button class="btn" id="enCancel">Cancel</button><button class="btn" id="enLater">Later</button><button class="btn primary" id="enRun">Run now</button></div>
+    <div class="p-foot"><span class="note" id="enSaved"></span><span class="sp"></span><button class="btn" id="enCancel">Close</button><button class="btn primary" id="enSave">Save rules</button></div>
   </div>
 </div>
 

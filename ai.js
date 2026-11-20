@@ -20,10 +20,11 @@ import { fileURLToPath } from "url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(__dirname, "data"));
 
-function cfg() {
-  try { return JSON.parse(fs.readFileSync(path.join(DATA_DIR, "config.json"), "utf8")).ai || {}; }
+function cfgAll() {
+  try { return JSON.parse(fs.readFileSync(path.join(DATA_DIR, "config.json"), "utf8")) || {}; }
   catch { return {}; }
 }
+function cfg() { return cfgAll().ai || {}; }
 
 // --- Providers and keys ---------------------------------------------------------
 export const PROVIDERS = {
@@ -361,11 +362,12 @@ export const STAGE_DEFAULTS = {
   // minSim no longer hides rows: semantic search always shows its top rows.
   // It decides the heading only: above it "Semantic matches", below it
   // "Perhaps you meant" (Matt, 2026-09-09).
-  semantic: { on: false, model: "", dims: 256, minSim: null },
+  semantic: { on: false, model: "", dims: 256, minSim: null, maxRowsPerSync: 0 },
   // prompt: the one overall rules text (v1); a table's own prompt, when
-  // set, wins for that table. maxRowsPerSync is the quiet cap on a plain
-  // sync; a full pass comes only from the Run button (the paid-pass gate).
-  enrich: { on: false, model: "", prompt: "", maxRowsPerSync: 1000, concurrency: 4 },
+  // set, wins for that table. maxRowsPerSync is an optional safety ceiling
+  // per sync (config.json only, 0 = none, the default): a sync builds every
+  // pending row, and the next sync carries on past the ceiling if one is set.
+  enrich: { on: false, model: "", prompt: "", maxRowsPerSync: 0, concurrency: 4 },
   understand: { on: false, model: "", timeoutMs: 3500 },
   // The plain best-match rule (search.js): marks one record when it is
   // clearly the one meant. No model, no key. Switch it off and no record is
@@ -375,9 +377,6 @@ export const STAGE_DEFAULTS = {
   // when `best` is on. Its model is the one this stage holds.
   rerank: { on: false, model: "", timeoutMs: 4000, candidates: 15, oneThreshold: 0.85 },
 };
-// A plain sync embeds at most this many new or changed rows; more waits for
-// a Run from the paid-pass gate.
-export const EMBED_CAP_PER_SYNC = 5000;
 const stageKind = (name) => (name === "semantic" ? "embedding" : "chat");
 
 // Prices per million tokens, for the estimate a person sees before a paid
@@ -405,17 +404,25 @@ export const STAGE_NAMES = Object.keys(STAGE_DEFAULTS);
 // the server holds the line.
 export const STAGE_LIMITS = {
   fuzzy: { minSim: [0.5, 0.99] },
-  semantic: { dims: [64, 3072], minSim: [0.05, 0.99] },
+  semantic: { dims: [64, 3072], minSim: [0.05, 0.99], maxRowsPerSync: [0, 100000000] },
   enrich: { maxRowsPerSync: [0, 1000000], concurrency: [1, 16] },
   understand: { timeoutMs: [500, 15000] },
   rerank: { timeoutMs: [500, 15000], candidates: [2, 30], oneThreshold: [0.5, 1] },
 };
 
+// AI notes and semantic search have no switch of their own: they are columns
+// on the Tables tab (config.tables.<raw>.enrich.on and .semantic), and the
+// stage counts as ON when any table has it on (Matt, 2026-11-20). A saved
+// `on` under config.ai.stages for these two is ignored.
+const PER_TABLE = { enrich: (t) => t?.enrich?.on === true, semantic: (t) => t?.semantic === true };
 export function stages() {
-  const saved = cfg().stages || {};
+  const all = cfgAll();
+  const saved = (all.ai || {}).stages || {};
+  const tables = Object.values(all.tables || {});
   const out = {};
   for (const [name, def] of Object.entries(STAGE_DEFAULTS)) {
     const s = { ...def, ...(saved[name] && typeof saved[name] === "object" ? saved[name] : {}) };
+    if (PER_TABLE[name]) s.on = tables.some(PER_TABLE[name]);
     // A blank model means "the live list's pick for the keys I have":
     // resolved at read time, so adding a key later fills it in without a
     // click. `auto` says the model was picked, not chosen.

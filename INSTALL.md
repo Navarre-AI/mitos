@@ -13,8 +13,8 @@ the exact search is all you want, but you'll want it).
   but a read-only account makes the server enforce that too.
 - Create a **Fly.io** account. Mitos runs there as one small machine.
 - Get **one API key** from an AI provider. A Google AI key covers everything
-  (naming, the search stages and semantic search). A Claude or OpenAI key
-  covers everything but embeddings; add a Google or Voyage key for those.
+  (naming, the While searching stages and semantic search). A Claude or OpenAI key
+  covers everything but vectors; add a Google or Voyage key for those.
 
 ## Install (Fly.io)
 
@@ -61,7 +61,7 @@ and very long text.
 **Save a Copy as XML** (optional, recommended): OData cannot tell Mitos a
 table's real name, its primary key, its modification-timestamp field, or
 which calculations are stored. A `File > Save a Copy As > XML` export can.
-Upload it on the Data Sources tab and rescan.
+Upload it on the Connection tab and rescan.
 
 The primary key must be a real, findable field: Mitos hands it back to
 FileMaker, where a script does an ordinary Find on it (see
@@ -109,7 +109,7 @@ measure the stages against each other on a few hundred simulated searches.
 ## Updating to a new version
 
 Mitos has no update check and never phones home, so nothing tells you a new
-version is out. Settings, Settings tab shows the version you're running;
+version is out. Settings, General tab shows the version you're running;
 [CHANGELOG.md](CHANGELOG.md) lists what changed.
 
 An update is a redeploy of the new code to the same Fly app. Your data

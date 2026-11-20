@@ -21,7 +21,7 @@ index, not on your server. Everything lives under one directory, `DATA_DIR`
 | `clicks.jsonl`, `records.jsonl` | Which result a person clicked, with the query; what each record-by-record call from FileMaker did (table, ids, updated, deleted, not found, errors). |
 | `sessions.json` | Sign-in sessions: a SHA-256 hash of each cookie token and when it started. Never the site password or the token. |
 | `schema-scan.json`, `naming.json`, `schema-hints.json` | The structure of your files: table and field names, counts, the proposed names, and the facts read from an uploaded Save a Copy as XML export. |
-| `understand-cache.json`, `models.json`, `ai-models.json`, `passes.jsonl`, `index-manifest.json`, `store-manifest.json` | The rewrite cache (query text in, rewrite out), the provider model lists, the ledger of paid passes, and the sync manifests. |
+| `understand-cache.json`, `models.json`, `ai-models.json`, `passes.jsonl`, `index-manifest.json`, `store-manifest.json` | The rewrite cache (query text in, rewrite out), the provider model lists, the ledger of AI passes, and the sync manifests. |
 | `tmp/` | Page files and checkpoints while a table is being pulled; deleted when the table is loaded. |
 
 What is not stored: fields you did not choose, containers, any record from
@@ -46,7 +46,7 @@ doesn't give the password away. Five wrong passwords from one address pause sign
 for a minute. A page opened with the site password in the URL (`?key=`) signs itself in and is sent on
 to the same address without it (how a FileMaker web viewer works). Scripts
 (a FileMaker schedule, `Insert from URL`, curl) can send the site password as `?key=` or HTTP
-Basic auth to `/api/` routes. Settings, Danger zone, **Sign out all** ends
+Basic auth to `/api/` routes. Settings, General tab, Danger zone, **Sign out all** ends
 every session. When `SITE_PASSWORD` is not set, the site is open and there is
 no sign-in. Fly forces HTTPS.
 
@@ -68,8 +68,8 @@ Nothing, unless an API key is set AND the stage that uses it is on. Then:
 | Call | When | What leaves your machine |
 |---|---|---|
 | Naming pass | Once per schema scan, cached until the schema changes | Table names, up to 6 occurrence names each, record counts, up to 18 field names per table, up to 4 field comments. No record data. |
-| Enhanced search: Interpret meaning (`understand`) | At search time, for two or more words | The raw table names and their display names, up to 12 field names per table, today's date, the query text. No record data. |
-| Use AI to determine best match (`rerank`) | At search time, for word searches with two or more candidates | The query, the reading, and up to 15 candidates: table label, title, the other display values (cut to 240 characters), and why each matched. **Display values are record data.** |
+| Understand the question (`understand`) | At search time, for two or more words | The raw table names and their display names, up to 12 field names per table, today's date, the query text. No record data. |
+| Let AI pick the best match (`rerank`) | At search time, for word searches with two or more candidates | The query, the reading, and up to 15 candidates: table label, title, the other display values (cut to 240 characters), and why each matched. **Display values are record data.** |
 | Enrichment, the search notes (`enrich`) | At sync time, only for tables switched on, ten records per call | The prompt and each record's source text: the values of its search fields. **Record data.** |
 | Semantic search (`semantic`) | At sync time for new or changed rows; at search time for the query | One line per record: the table's display name, the values of its search fields, and its search notes when present, cut to 2,000 characters. **Record data.** At search time, the query text. |
 | Key test, model list | When you paste an API key, or open a model picker | The API key, to that provider's own endpoint. |
@@ -99,9 +99,11 @@ the Docker build, never at runtime.
 - **Show generated text as record data.** Display values are copied
   verbatim from source rows (`RULES.md` rule 1). Search notes are searched
   and never shown; a hit through them says so.
-- **Run a paid pass unasked.** Boot never syncs. A plain sync caps at 5,000
-  vectors and 1,000 notes; the rest waits for the Run button, which shows
-  the count and the price first.
+- **Spend money you haven't switched on.** Boot never syncs. Enrichment and
+  Semantic search are off until you switch them on for a table, and that
+  shows the count and the price first. A sync then builds every pending
+  record, so the switch is the gate. `maxRowsPerSync` is an optional ceiling,
+  off by default.
 - **Let search text reach the database as code.** Query words are escaped
   into `LIKE` patterns and into the full-text (BM25) query string, and the
   read path accepts only `SELECT`. The DuckDB CLI runs in `-safe` mode (no

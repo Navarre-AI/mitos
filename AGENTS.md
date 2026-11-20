@@ -138,7 +138,7 @@ web viewer or `Insert from URL` with the site password in the URL. The full list
 | `GET /api/search?q=` | Phase 1: exact and fuzzy, instant. `limit`, `tables=raw,names`, `stages=...`, `ai=1` runs both phases. |
 | `GET /api/search/ai?q=` | Phase 2: the model stages; returns the whole result again with `reading`, `rewritten`, `similar`, `best`. |
 | `GET /api/index/sample?n=&table=` | Random indexed rows (display values). |
-| `POST /api/index/sync` | Start a sync job. `{ full: true }` runs the paid passes past their caps; `{ stagesOnly: true }` runs only the stages. |
+| `POST /api/index/sync` | Start a sync job: data, Enrichment, Vectors, every pending record. `full` and `stagesOnly` still work but the UI no longer sends them. |
 | `GET /api/index/stream?since=` | SSE progress feed with replay. |
 | `GET /api/index/job` | The current or last job and its events. |
 | `POST /api/index/cancel` | Stop the running job. A table is kept whole or not at all. |
@@ -160,7 +160,8 @@ web viewer or `Insert from URL` with the site password in the URL. The full list
 | `GET /api/disk` | Free bytes on the data volume. |
 | `GET /api/ai/models` | Curated model lists per provider with an API key. `?refresh=1`. |
 | `POST /api/ai/test` | Prove an API key, or run one stage once and time it (`which`: naming, understand, semantic, rerank, enrich). |
-| `GET /api/ai/estimate` | What a paid Run would do and cost, plus the ledger of past passes. |
+| `GET /api/ai/estimate` | What the pending Enrichment and Vectors would cost, plus the ledger of past passes. |
+| `POST /api/ai/estimate` | What-if cost for the tables and models in the body. Saves nothing. |
 | `POST /api/ai/enrich-preview` | Sample search notes for a few records, nothing saved. |
 | `POST /api/ai/enrich/forget` | Delete a table's search notes on purpose. |
 | `POST /api/click` | Record which result a person clicked. |
@@ -182,7 +183,7 @@ carries `why` (words) and `via` (exact, fuzzy, semantic).
 | `fm.js` | All FileMaker I/O. OData discovery, `$metadata`, counts, adaptive paging, the quoted `$select` and its fallbacks. Read `GOTCHAS.md` first. |
 | `ai.js` | The one door for chat calls, the four providers and their keys, the stage defaults, limits and readiness, prices. |
 | `embed.js` | Text in, unit vectors out, for OpenAI, Google and Voyage. |
-| `stages.js` | The two index-time stages: enrichment (search notes) and embedding, incremental, capped, with the paid-pass ledger. |
+| `stages.js` | The two index-time stages: enrichment (search notes) and vectors, incremental, every pending row (optional `maxRowsPerSync` ceiling, off), with the pass ledger. |
 | `understand.js` | The query-understanding stage: a fast model rewrites words into the engine's syntax. Cached on disk. |
 | `rerank.js` | The decision stage: reorders the short list and may name one best match. |
 | `naming.js` | The schema naming pass (one call per schema, cached) and its heuristic fallback. |
@@ -191,7 +192,7 @@ carries `why` (words) and `via` (exact, fuzzy, semantic).
 | `tables.config.js` | The table config for the sample data; a real install writes the same shape to `data/config.json`. |
 | `saxml.js` | Reader for a Save a Copy as XML export. Hints only. |
 | `env.js` | `.env` loader with override semantics. |
-| `public/index.html`, `public/app.js` | The whole UI: search, the card window (`?embed=1`), Settings (five tabs: Data Sources, Tables, AI, Log, Settings with the Danger zone), the wizard, the sync overlay. |
+| `public/index.html`, `public/app.js` | The whole UI: search, the card window (`?embed=1`), Settings (five tabs: Connection, Tables, AI, Log, General with Preferences, About and the Danger zone), the wizard, the sync overlay. |
 | `filemaker/` | The FileMaker side: the kit file, the search and go-to-record scripts, `cMitosJSON.md`. |
 | `scripts/` | `eval.mjs`, `simulate.mjs`, `check-order.mjs`, `fetch-duckdb.mjs`. |
 | `eval/` | `cases.json`, its readable twin, and simulator reports. |

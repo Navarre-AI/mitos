@@ -54,11 +54,11 @@ error in the response's `stages` and the search still answers.
 | Stage (its switch) | What it does | Model | When it runs |
 |---|---|---|---|
 | Close spellings | Jaro-Winkler on record names: `Murpy`, `whitfeild`, `Ac me systems`, `bob whitfeld` (the name table applies) | none | with the exact search, in about 20 ms |
-| Enrichment | During sync, a fast model writes notes per record: other spellings, `Last, First`, nicknames, plain words for what it is. Searched, never shown; a hit through them says "in the search notes" in the API | a fast chat model, ten records per call | at sync, only for rows without notes, per table (switch and prompt on the Tables tab), capped per sync |
-| Semantic search | A vector per record; `mid-range digital SLR` lists the cameras below the exact hits. It has a switch per indexed table too, with the vector count and size | an embedding model: OpenAI text-embedding-3, Gemini, or Voyage | vectors are built during sync; the query is embedded at search time and cached |
-| Enhanced search: Interpret meaning | `people with birthdays in the first half of May` becomes `5/1/2026...5/15/2026`; `inv 2216` becomes `2216`; `someone named bob whitfeld or something` becomes `bob whitfeld`. The rewrite runs through the exact search again | a fast chat model | only for two or more words; skipped for one word, a number, a date, an email, a phone |
+| Enrichment | During sync, a fast model writes notes per record: other spellings, `Last, First`, nicknames, plain words for what it is. Searched, never shown; a hit through them says "in the search notes" in the API | a fast chat model, ten records per call | at sync, only for rows without notes, on tables where it is switched on (top right of the table's panel on the Tables tab) |
+| Semantic search | A vector per record; `mid-range digital SLR` lists the cameras below the exact hits. Switched per table, in the table's panel, with the vector count and size | a vector model: OpenAI text-embedding-3, Gemini, or Voyage | vectors are built during sync; the query is embedded at search time and cached |
+| Understand the question | `people with birthdays in the first half of May` becomes `5/1/2026...5/15/2026`; `inv 2216` becomes `2216`; `someone named bob whitfeld or something` becomes `bob whitfeld`. The rewrite runs through the exact search again | a fast chat model | only for two or more words; skipped for one word, a number, a date, an email, a phone |
 | Best match | A plain rule, no model, no API key. One record is marked best when every word you typed matches it and the next result is well behind (or an email, phone or number only one record has). Switch it off and no record is marked | none | with every word search |
-| Use AI to determine best match | Sits under Best match. A fast model reorders the short list and names one best match when it is sure. Below its confidence the list is the answer | a fast chat model | only for word searches with two or more candidates |
+| Let AI pick the best match | Sits under Best match. A fast model reorders the short list and names one best match when it is sure. Below its confidence the list is the answer | a fast chat model | only for word searches with two or more candidates |
 
 The page shows the exact list in tens of milliseconds, then asks for the AI
 phase once the words stand still, and fills it in behind: a "read as" line,
@@ -69,27 +69,32 @@ field to edit.
 
 Two screens: the plain page is the search with one Settings button, and
 `?embed=1&q=...` is the card window (results only). Settings has five tabs:
-**Data Sources**, **Tables**, **AI**, **Log** and **Settings** (this
-machine, its memory and disk, the version, and the Danger zone). Escape backs
-out of Settings one level at a time. Light or dark follows the system, with a
-switch if you want to override it.
+**Connection**, **Tables**, **AI**, **Log** and **General**. AI holds the keys,
+the models and the While searching list (the stage rows above). General has
+the preferences (light or dark, which follows the system unless you pick;
+date order; auto-sync), About (this machine, its memory and disk, the
+version) and the Danger zone. Escape backs out of Settings one level at a
+time.
 
-**Paid passes are a formal step.** Switching Semantic search on shows the
-record count and the price first, then Run now or Later. Switching
-Enrichment on opens a window: the model, the rules, the tables, a live
-preview of the notes on two records per table, the price, then Run now or
-Later. A plain sync stays under a quiet cap (5,000 vectors, 1,000 notes);
-the rest waits for Run on the AI tab, which shows what is waiting and a
-ledger of what has run. Every stage row has a "?" that explains it in full.
-Turning Semantic search off warns first, then deletes the vectors to free
-disk.
+**One sync does it all.** A sync runs three phases in order: your data,
+Enrichment, Vectors. It builds every pending record, no caps, and three small
+progress bars show where it is. There is no Run button and no separate paid
+pass. Enrichment and Semantic search are switched per table, in the table's
+panel on the Tables tab (two switches, top right). A feature is on when any
+table has it on. Switching one on shows the count and the price first, then Sync now or Later; Later
+keeps it on and the next sync builds it. If you want a safety ceiling,
+`maxRowsPerSync` in the stage's config limits the rows per sync (off by
+default). Every stage row has a "?" that explains it in full.
+Turning Semantic search off on a table warns first, then deletes its vectors
+to free disk.
 
 **Models come from a public list.** The menus read
 https://navarre.ai/ai-models.json, the same list Pythia and Clio use. It is
 refreshed every 12 hours and whenever you save an API key, grouped by job, with a
 recommended pick per stage. A stage you haven't set takes the recommended
 model of the first provider that has an API key. API keys for four providers live on
-the AI tab.
+the AI tab. A model that has dropped off the list keeps working; the AI tab
+shows a warning so you can pick a current one when you get to it.
 
 The one other AI call is the schema naming pass at scan time (D_Org~B becomes
 Organization), and it is optional too.

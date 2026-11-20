@@ -35,7 +35,10 @@ export function semanticDefault(raw, t) {
   if (!types) return true;
   return fields.some((f) => !types.has(f) || types.get(f) === "String");
 }
-// The switch in effect: the saved one, else the default.
-export const semanticOn = (raw, t) => (typeof t?.semantic === "boolean" ? t.semantic : semanticDefault(raw, t));
+// The switch in effect: on only when the table's Semantic switch is on. There
+// is no global switch and no default-on: a table with no saved switch is off
+// (Matt, 2026-11-20). semanticDefault stays for the one-time config migration
+// from 1.1.0, which turned the default on for tables with real text.
+export const semanticOn = (raw, t) => t?.semantic === true;
 // The tables (raw names) semantic search covers.
 export const semanticTables = (tablesCfg) => Object.keys(tablesCfg || {}).filter((n) => semanticOn(n, tablesCfg[n]));

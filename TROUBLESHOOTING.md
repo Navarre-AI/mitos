@@ -46,7 +46,7 @@ good run needs a handful of approvals, not dozens.
 <file>: (212): Invalid account/password. Nothing was saved.` During a sync:
 `FileMaker could not open "<file>": (212): Invalid account/password. Check
 the server address, the account and the password in Settings, FileMaker
-tab.` (Mitos still says "FileMaker tab"; it's the **Data Sources** tab.)
+tab.` (Mitos still says "FileMaker tab"; it's the **Connection** tab.)
 
 **Cause.** The account or the password is wrong for that file, or a password
 manager filled the form with another account. FileMaker's code 212 means
@@ -139,19 +139,19 @@ record count (about 1.5 KB per record, twice) and stops with `Mitos cannot
 pull <table> (N records) with X GB of free disk. It needs about Y GB.` Grow
 the volume in Fly (`fly volumes extend`) and sync again.
 
-## Semantic search stopped: quota exceeded
+## Vectors stopped: quota exceeded
 
 **What you see.** At the end of a sync: `<Provider> refused this key: quota
-exceeded. Add credit to the <Provider> account, then Run again.` For Google:
-`Enable billing on the Google AI project, then Run again.`
+exceeded. Add credit to the <Provider> account, then sync again.` For Google:
+`Enable billing on the Google AI project, then sync again.`
 
-**Cause.** The embedding provider answered 429 or a quota message. The API key is
+**Cause.** The vector provider answered 429 or a quota message. The API key is
 fine; the account is out of credit or over its limit. Mitos gives a 429 up
 to four attempts with a growing pause, then stops the pass and keeps every
 vector already written.
 
-**Fix.** Add credit, then AI tab, Paid passes, **Run**. A plain sync embeds
-at most 5,000 new rows; Run does the rest. A refused API key (401, 403) says
+**Fix.** Add credit, then sync again. The Vectors phase picks up every row
+still waiting. A refused API key (401, 403) says
 `refused this key. Check the key on the AI tab`; a silent provider says
 `did not answer. Check the connection`.
 
@@ -246,7 +246,7 @@ after you typed one. From a script, `401 Not signed in.` Five wrong passwords in
 a row pause sign-in for a minute.
 
 **Cause.** The address was opened without a signed-in session and without the
-site password in the URL (`?key=`). A session lasts 30 days, and **Sign out all** (Settings,
+site password in the URL (`?key=`). A session lasts 30 days, and **Sign out all** (General tab,
 Danger zone) ends every one. A FileMaker web viewer can't answer a Basic
 auth prompt, and it may not keep the cookie, so it needs the site password in its
 address.

@@ -13,9 +13,9 @@ import { fileURLToPath } from "url";
 import { fmConfigured, fmConnection, setConnection, resetConnection, withConnection, checkAuth, listDatabases, fetchSchema, fetchCounts, sampleRows, fmReason } from "./fm.js";
 import { indexStats, stageStats, sql, storeExists, ensureIndexTable, vectorSearch, passEstimate, clearEnrichment, freeDiskBytes, totalDiskBytes, storeManifest, dropTableCopies, wipeCopies, wipeIndex, wipeNotes, wipeAllLocalData, deleteAllVectors, deleteTableVectors, vectorTotals } from "./store.js";
 import { buildIndex, indexManifest, isBuilding, isRefreshing, tablesConfig, MITOS_JSON_FIELD, refreshRecords } from "./indexer.js";
-import { semanticOn, semanticTables } from "./semantic.js";
+import { semanticOn, semanticTables, semanticDefault } from "./semantic.js";
 import { search, forgetSearchCache } from "./search.js";
-import { namingInfo, keyStatus, isEmbeddingModel, askModel, roleModels, PROVIDERS, STAGE_NAMES, STAGE_DEFAULTS, STAGE_LIMITS, stages, stageReady, keyForProvider, providerOf, modelId, chat, estimateCost, EMBED_CAP_PER_SYNC, modelListCache, refreshModelList, ensureModelList, RECOMMENDED_JOB, autoModel, modelsView, curatedReady, refreshCurated, curatedStatus, refreshAllModels } from "./ai.js";
+import { namingInfo, keyStatus, isEmbeddingModel, askModel, roleModels, PROVIDERS, STAGE_NAMES, STAGE_DEFAULTS, STAGE_LIMITS, stages, stageReady, keyForProvider, providerOf, modelId, chat, estimateCost, modelListCache, refreshModelList, ensureModelList, RECOMMENDED_JOB, autoModel, modelsView, curatedReady, refreshCurated, curatedStatus, refreshAllModels } from "./ai.js";
 import { vectorKey, embedInfo, embedQuery } from "./embed.js";
 import { defaultEnrichPrompt, promptFor, enrichKeyFor, enrichPreview, readPasses } from "./stages.js";
 import { understand, clearUnderstandCache } from "./understand.js";
@@ -110,8 +110,12 @@ const app = express();
 //
 // People sign in on a page: the bare address shows one key field, and a
 // right key gets a session cookie holding a random token (never the key).
-// The key never sits in a URL, a script or a layout, so a Save as XML or a
-// DDR of the FileMaker file has nothing to give away.
+// People type the key on the sign-in page and it never sits in a URL for
+// them; the session cookie holds a random token, not the key. A web viewer
+// or a machine call (a FileMaker script, a schedule, curl) does put the site
+// password in the URL (?key=) or an HTTP Basic header, so it lives in that
+// script and layout, and a Save as XML or a DDR of the FileMaker file will
+// show it. Treat the file like a password store.
 //
 // Machines (a FileMaker Server schedule waking the sync, Insert from URL,
 // curl, the eval scripts) may still use ?key= or HTTP Basic on /api/.
@@ -605,6 +609,13 @@ app.post("/api/config", async (req, res) => {
       if (keep.size) dropNow = Object.keys(savedTables).filter((n) => !keep.has(n));
       vecOff = Object.entries(req.body.tables).filter(([n, t]) => t && t.semantic === false && !dropNow.includes(n) && semanticOn(n, beforeTables[n])).map(([n]) => n);
       if ((dropNow.length || vecOff.length) && (syncRunning() || wiping)) return res.status(409).json({ error: SYNC_BUSY });
+      // A table's Semantic switch cannot go on with no vector model to run it.
+      const newlySemantic = Object.entries(req.body.tables).filter(([n, t]) => t && t.semantic === true && !semanticOn(n, beforeTables[n]));
+      if (newlySemantic.length) {
+        const m = stages().semantic.model || autoModel("semantic");
+        const p = m ? providerOf(m, "embedding") : "";
+        if (!p || !keyForProvider(p).key) return res.status(400).json({ error: "Semantic search needs a Google, OpenAI or Voyage key. Add one on the AI tab." });
+      }
     }
     let dropped = [];
     let vectorsDeleted = {};
@@ -689,14 +700,11 @@ app.post("/api/config", async (req, res) => {
           if (name !== "semantic" && patch.model && isEmbeddingModel(patch.model)) {
             return res.status(400).json({ error: `"${String(patch.model).trim()}" is an embedding model. Choose a chat model for ${name === "enrich" ? "enrichment" : name}.` });
           }
-          // Semantic search cannot be switched on with no embedding model to run it.
-          if (name === "semantic" && patch.on === true) {
-            const m = (patch.model !== undefined ? String(patch.model || "").trim() : cur.model) || autoModel("semantic");
-            const p = m ? providerOf(m, "embedding") : "";
-            if (!p || !keyForProvider(p).key) return res.status(400).json({ error: "No embedding model found. Add a Google, OpenAI or Voyage key, or refresh the model list." });
-          }
           for (const [k, v] of Object.entries(patch)) {
             if (!(k in STAGE_DEFAULTS[name])) continue;
+            // Enrichment and semantic search have no switch of their own: a
+            // table's own switch decides, and the stage is on when any table is.
+            if (k === "on" && (name === "enrich" || name === "semantic")) continue;
             if (k === "on") cur.on = Boolean(v);
             else if (k === "model") cur.model = String(v || "").trim();
             else if (k === "prompt") cur.prompt = String(v || "").trim().slice(0, 4000);
@@ -1472,10 +1480,52 @@ app.get("/api/ai/estimate", async (_req, res) => {
       // the switch just turns on). `totalRows`: records in the tables semantic
       // search covers. `vectors`/`vectorBytes`: what is stored now. `rebuildCost`:
       // what building every vector from nothing would cost (the switch-off warning).
-      embed: { on: s.semantic.on && stageReady("semantic").ready, model: embedModel, rows: sum(embed, "waiting"), waiting: sum(embed, "waiting"), cost: sum(embed, "cost"), tables: embed, capPerSync: EMBED_CAP_PER_SYNC,
+      embed: { on: s.semantic.on && stageReady("semantic").ready, model: embedModel, rows: sum(embed, "waiting"), waiting: sum(embed, "waiting"), cost: sum(embed, "cost"), tables: embed,
         upToDate: sum(embed, "waiting") === 0, totalRows: coveredRows, vectors: held.vectors || 0, vectorBytes: held.vectorFileBytes || 0, rebuildCost },
-      enrich: { on: s.enrich.on && stageReady("enrich").ready, model: s.enrich.model, rows: sum(enrich, "waiting"), waiting: sum(enrich, "waiting"), notes: sum(enrich, "notes"), totalRows: sum(enrich, "rows"), cost: sum(enrich, "cost"), tables: enrich, capPerSync: Number(s.enrich.maxRowsPerSync) || 0 },
+      enrich: { on: s.enrich.on && stageReady("enrich").ready, model: s.enrich.model, rows: sum(enrich, "waiting"), waiting: sum(enrich, "waiting"), notes: sum(enrich, "notes"), totalRows: sum(enrich, "rows"), cost: sum(enrich, "cost"), tables: enrich },
       passes: readPasses(12),
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// What the NEXT sync would also build, as the Tables form stands (`tables`,
+// not saved yet) and/or with a different model (`enrichModel`, `embedModel`;
+// "" = the default). A table not yet in the index counts at its scanned size.
+// Body: { tables?: {raw: {semantic, enrich:{on,prompt}}}, enrichModel?, embedModel? }
+app.post("/api/ai/estimate", async (req, res) => {
+  try {
+    const cfg = readConfig();
+    const s = stages();
+    const labels = displayNamesMap();
+    const body = req.body || {};
+    const tablesCfg = body.tables && typeof body.tables === "object" && Object.keys(body.tables).length ? body.tables : (cfg.tables || tablesConfig());
+    const eModel = body.enrichModel !== undefined ? (String(body.enrichModel || "").trim() || autoModel("enrich")) : s.enrich.model;
+    const mModel = body.embedModel !== undefined ? (String(body.embedModel || "").trim() || autoModel("semantic")) : s.semantic.model;
+    const dims = Number(s.semantic.dims) || 256;
+    const mProv = mModel ? providerOf(mModel, "embedding") : "";
+    const vecKeyNow = mProv && mModel ? `${mProv}/${modelId(mModel)}/${dims}` : "";
+    const enrichKeys = {};
+    for (const [name, t] of Object.entries(tablesCfg)) if (t?.enrich?.on) enrichKeys[name] = enrichKeyFor(eModel, promptFor(name, t, labels[name]));
+    const semTables = Object.keys(tablesCfg).filter((n) => tablesCfg[n]?.semantic === true);
+    const est = await passEstimate(vecKeyNow, enrichKeys, semTables);
+    const held = await stageStats(vectorKey(), dims).catch(() => ({ tables: [] }));
+    const indexed = new Set(held.tables.map((r) => r.src_table));
+    const scanRows = Object.fromEntries((readScan()?.tables || []).map((t) => [t.name, Number(t.rowCount) || 0]));
+    const avgChars = Number((await sql(`SELECT avg(length(source_text)) AS c FROM mitos_index`).catch(() => [{ c: 0 }]))[0]?.c) || 200;
+    let nRows = 0, nCost = 0, vRows = 0, vCost = 0;
+    for (const r of est.enrich) { nRows += r.rows; nCost += estimateCost(eModel, r.rows, r.chars / 4 + 60, 120); }
+    for (const r of est.embed) { vRows += r.rows; vCost += estimateCost(mModel, r.rows, r.chars / 4 + 8); }
+    // Ticked tables that are not in the index yet: their scanned size.
+    for (const name of Object.keys(tablesCfg)) {
+      if (indexed.has(name) || !scanRows[name]) continue;
+      if (enrichKeys[name]) { nRows += scanRows[name]; nCost += estimateCost(eModel, scanRows[name], avgChars / 4 + 60, 120); }
+      if (semTables.includes(name)) { vRows += scanRows[name]; vCost += estimateCost(mModel, scanRows[name], avgChars / 4 + 8); }
+    }
+    const readyFor = (model, kind) => { const p = model ? providerOf(model, kind) : ""; return Boolean(p && keyForProvider(p).key); };
+    const r2 = (n) => Math.round(n * 100) / 100;
+    res.json({
+      notes: { rows: nRows, cost: r2(nCost), model: eModel, ready: readyFor(eModel, "chat") },
+      vectors: { rows: vRows, cost: r2(vCost), model: mModel, ready: readyFor(mModel, "embedding") },
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1785,7 +1835,32 @@ setInterval(autoSyncTick, 60000);
 
 // --- Boot ---------------------------------------------------------------------
 
+// One-time config move (1.2): the global Enrichment and Semantic switches are
+// gone; each table holds its own. What was on stays on: a global ON becomes
+// the per-table values (semantic: the table's saved switch, else the old
+// default; enrichment: the table's own tick), a global OFF turns every table's
+// switch off. The old global `on` flags are removed. A sample install (no
+// saved tables) just loses the flags.
+function migrateColumns() {
+  try {
+    const cfg = readConfig();
+    if (cfg.columnsMigrated) return;
+    const st = cfg.ai?.stages || {};
+    const semG = st.semantic?.on === true, enG = st.enrich?.on === true;
+    for (const [n, t] of Object.entries(cfg.tables || {})) {
+      t.semantic = semG ? (typeof t.semantic === "boolean" ? t.semantic : semanticDefault(n, t)) : false;
+      if (!enG && t.enrich) t.enrich = { ...t.enrich, on: false };
+    }
+    if (st.semantic) delete st.semantic.on;
+    if (st.enrich) delete st.enrich.on;
+    cfg.columnsMigrated = "1.2";
+    writeConfig(cfg);
+    console.log(`  config: AI switches moved to the tables (semantic was ${semG ? "on" : "off"}, enrichment ${enG ? "on" : "off"})`);
+  } catch (e) { console.error("config migration:", e.message); }
+}
+
 app.listen(PORT, async () => {
+  migrateColumns();
   console.log(`Mitos listening on http://localhost:${PORT}`);
   // The providers' model lists, read once when there is no cached one: which
   // provider serves a model and the default picks come from them (ai.js).
