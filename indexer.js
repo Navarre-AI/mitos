@@ -13,7 +13,7 @@ import { fmConfigured, fetchSchema, fetchRowsByKeys, fmReason } from "./fm.js";
 import {
   sql, syncTables, loadSampleData, sampleAvailable, sampleUpdatedAt, storeManifest,
   ensureIndexTable, indexHashes, upsertIndexRows, deleteIndexRows, indexStats, normalizeText, clearIndexRows,
-  upsertShadowRows, deleteShadowRows, passEstimate, buildTextIndex,
+  upsertShadowRows, deleteShadowRows, passEstimate, buildTextIndex, keyText,
 } from "./store.js";
 import { DEFAULT_TABLES } from "./tables.config.js";
 import { parseNumber, parseDate } from "./query.js";
@@ -322,7 +322,7 @@ export async function refreshRecords({ table, ids = [], deleted = [], onEvent = 
 const INDEX_BATCH = 20000;
 async function indexOneTable(table, t, onEvent, summary, { onlyIds = null } = {}) {
     // A table the pull skipped (cancelled, or never synced) has no local copy.
-    const where = onlyIds ? ` WHERE CAST(${q(t.pk)} AS VARCHAR) IN (${onlyIds.map((id) => `'${esc(id)}'`).join(",")})` : "";
+    const where = onlyIds ? ` WHERE ${keyText(t.pk)} IN (${onlyIds.map((id) => `'${esc(id)}'`).join(",")})` : "";
     const counted = await sql(`SELECT count(*) AS c FROM ${q(table)}${where}`).catch(() => null);
     if (!counted) { onEvent({ type: "note", name: table, note: "no local copy of this table yet; not indexed" }); return; }
     const total = Number(counted[0]?.c || 0);

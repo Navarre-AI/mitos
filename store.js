@@ -28,6 +28,18 @@ fs.mkdirSync(TMP_DIR, { recursive: true });
 const q = (id) => `"${String(id).replace(/"/g, '""')}"`; // quote a SQL identifier
 const esc = (s) => String(s).replace(/'/g, "''");        // escape a SQL string literal
 
+// A key column as the text the index holds. A FileMaker number arrives as a
+// DOUBLE, and CAST(42.0 AS VARCHAR) is '42.0', which never equals the id '42'
+// the page, the beacon and the index use. A whole number renders without the
+// ".0"; a fraction keeps its digits; text and dates are cast as they are.
+export const keyText = (col) => {
+  const c = q(col);
+  return `(CASE WHEN typeof(${c}) IN ('DOUBLE','FLOAT') OR typeof(${c}) LIKE 'DECIMAL%' THEN ` +
+    `(CASE WHEN isfinite(TRY_CAST(${c} AS DOUBLE)) AND abs(TRY_CAST(${c} AS DOUBLE)) < 1e15 AND TRY_CAST(${c} AS DOUBLE) = floor(TRY_CAST(${c} AS DOUBLE)) ` +
+    `THEN CAST(CAST(TRY_CAST(${c} AS DOUBLE) AS BIGINT) AS VARCHAR) ELSE CAST(TRY_CAST(${c} AS DOUBLE) AS VARCHAR) END) ` +
+    `ELSE CAST(${c} AS VARCHAR) END)`;
+};
+
 // Each sql() shells out to a fresh duckdb process. A write process holds an
 // EXCLUSIVE lock on the file, so serialize all invocations through one
 // in-process queue plus a short retry (same rationale as Pythia's cube.js).
@@ -361,7 +373,7 @@ async function syncTable(table, { onProgress, onNote, onResumed, onCheck, waterm
 // The re-read asks FileMaker for just those ids and swaps its answer in, so a
 // copy heals once the customer fixes the data. Whatever FileMaker still has
 // twice keeps the newer row (the table's modification field, else the last
-// one read). Throws only for a cancel, or for a key that is not unique at all (see below). A re-read that fails falls back to the local rule.
+// one read). Throws only for a cancel. A re-read that fails falls back to the local rule.
 // Returns { duplicates: [{id, count}] (still doubled, at most 100), total, healed }.
 async function healDuplicates(table, name, { idField, modField, names, struct, ddlType, shown, onNote, shouldStop = () => false }) {
   const none = { duplicates: [], total: 0, healed: 0 };
@@ -370,22 +382,16 @@ async function healDuplicates(table, name, { idField, modField, names, struct, d
   let dups;
   try { dups = await doubled(); } catch { return none; }
   if (!dups.length) return none;
-  // A key that repeats this much is not a key (a status, a category): healing
-  // would collapse the table to one row per value. Stop this table, change
-  // nothing, and say which field to replace. "This much": more than 100
-  // repeated ids, or more rows to remove than 1% of the table (a table of a few
-  // hundred rows may lose up to 5 before that counts).
-  const rowsHere = Number((await sql(`SELECT count(*) c FROM ${q(name)}`).catch(() => [{ c: 0 }]))[0]?.c || 0);
-  const extra = dups.reduce((a, d) => a + Number(d.n) - 1, 0);
-  if (dups.length > 100 || extra > Math.max(5, rowsHere * 0.01)) {
-    throw new Error(`${idField} is not unique in ${shown}. Pick another key in Settings, Tables.`);
-  }
+  // Many repeated ids never stop a sync: the newer row of each is kept and
+  // the summary says so. Past 100 ids the re-read from FileMaker is skipped
+  // (it would be one request per id for a field that is not really a key);
+  // the local rule below does the work.
   const ids = dups.map((d) => d.id);
   // Step a: ask FileMaker for those ids alone (at most 5,000; the rest meet
   // the local rule).
-  const reread = ids.slice(0, 5000);
+  const reread = dups.length > 100 ? [] : ids.slice(0, 5000);
   const files = [path.join(TMP_DIR, `${name}.fix-rows.json`), path.join(TMP_DIR, `${name}.fix-ids.json`)];
-  try {
+  if (reread.length) try {
     const numericKey = (table.fields || []).find((f) => f.name === idField)?.type === "Decimal";
     const fetched = await fetchRowsByKeys(table.occurrences[0], names, idField, reread, { db: table.db, select: names, numericKey, shouldStop });
     fs.writeFileSync(files[0], JSON.stringify(fetched));
@@ -419,8 +425,10 @@ async function healDuplicates(table, name, { idField, modField, names, struct, d
   const duplicates = left.map((d) => ({ id: d.id, count: Number(d.n) }));
   const healed = dups.length - left.length;
   if (onNote) {
-    for (const d of duplicates.slice(0, 5)) onNote(`${shown}: ${d.count} records share ID ${d.id}. Kept the newer one. Fix it in FileMaker.`);
-    if (duplicates.length > 5) onNote(`${shown}: ${duplicates.length - 5} more IDs are shared by several records. Kept the newer one of each. Fix it in FileMaker.`);
+    if (duplicates.length) {
+      const first = duplicates.slice(0, 5).map((d) => d.id).join(", ");
+      onNote(`${shown}: ${left.length.toLocaleString()} records share an ID with another. Kept the newer one each time. Fix them in FileMaker. First IDs: ${first}${left.length > 5 ? " and more" : ""}.`);
+    }
     if (healed > 0) onNote(`${shown}: ${healed} repeated ID${healed === 1 ? "" : "s"} in the local copy ${healed === 1 ? "is" : "are"} fixed now (FileMaker has one record for ${healed === 1 ? "it" : "each"}).`);
   }
   return { duplicates: duplicates.slice(0, 100), total: duplicates.length, healed };
@@ -447,7 +455,7 @@ export async function upsertShadowRows(name, pk, rows) {
 }
 export async function deleteShadowRows(name, pk, keys) {
   if (!keys.length) return 0;
-  await sql(`DELETE FROM ${q(name)} WHERE CAST(${q(pk)} AS VARCHAR) IN (${keys.map((k) => `'${esc(k)}'`).join(",")})`, { allowWrite: true });
+  await sql(`DELETE FROM ${q(name)} WHERE ${keyText(pk)} IN (${keys.map((k) => `'${esc(k)}'`).join(",")})`, { allowWrite: true });
   return keys.length;
 }
 

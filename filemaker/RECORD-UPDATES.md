@@ -27,14 +27,15 @@ Pro, it posts right there and that dialog can flash up.
 3. On each layout whose table Mitos searches, add an **OnRecordCommit** layout
    trigger that runs it, with this parameter:
 
-       JSONSetElement ( "{}" ; [ "id" ; Table::PrimaryKey ; JSONString ] )
+       JSONSetElement ( "{}" ;
+         [ "table" ; "company" ; JSONString ] ;
+         [ "id" ; Company::ID ; JSONString ]
+       )
 
-   Or leave the parameter empty and edit the `$id` line to your key field.
-   Numeric keys work as is; Mitos turns them into text.
-4. The table comes from the layout (`Get ( LayoutTableName )`) unless you pass
-   `"table"` in the parameter. Mitos accepts the table word, the friendly name
-   or the occurrence name.
-5. A script that edits records without a commit trigger firing can call it the
+   Both are required: the table word from Mitos's Tables tab, and the primary
+   key. With either empty the script does nothing. Numeric keys work as is;
+   Mitos turns them into text.
+4. A script that edits records without a commit trigger firing can call it the
    same way after it commits.
 
 On the server, the script runs with the account's privileges, so that account
