@@ -9,6 +9,7 @@
   },
   "scripts": {
     "start": "node server.js",
+    "test": "node scripts/test.mjs",
     "eval": "node scripts/eval.mjs",
     "postinstall": "node scripts/fetch-duckdb.mjs",
     "simulate": "node scripts/simulate.mjs"

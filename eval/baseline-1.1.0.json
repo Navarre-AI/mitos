@@ -1,0 +1,1156 @@
+{
+  "version": "1.1.0",
+  "savedAt": "2026-11-20T21:34:23.112Z",
+  "sampleRows": 288,
+  "overall": {
+    "cases": 141,
+    "passed": 127,
+    "targets": 118,
+    "hit1": 0.923728813559322,
+    "hit3": 0.9322033898305084,
+    "mrr": 0.9286723163841808,
+    "tableFirst": 0.6016949152542372,
+    "zero": 0.04316546762589928
+  },
+  "groups": {
+    "names": {
+      "cases": 14,
+      "passed": 14,
+      "targets": 14,
+      "hit1": 1,
+      "hit3": 1,
+      "mrr": 1,
+      "tableFirst": 0.21428571428571427,
+      "zero": 0
+    },
+    "nicknames": {
+      "cases": 12,
+      "passed": 12,
+      "targets": 12,
+      "hit1": 0.9166666666666666,
+      "hit3": 1,
+      "mrr": 0.9444444444444445,
+      "tableFirst": 0.08333333333333333,
+      "zero": 0
+    },
+    "typos": {
+      "cases": 13,
+      "passed": 13,
+      "targets": 13,
+      "hit1": 1,
+      "hit3": 1,
+      "mrr": 1,
+      "tableFirst": 0.8461538461538461,
+      "zero": 0
+    },
+    "last-first": {
+      "cases": 6,
+      "passed": 6,
+      "targets": 6,
+      "hit1": 1,
+      "hit3": 1,
+      "mrr": 1,
+      "tableFirst": 0,
+      "zero": 0
+    },
+    "numbers": {
+      "cases": 9,
+      "passed": 9,
+      "targets": 8,
+      "hit1": 1,
+      "hit3": 1,
+      "mrr": 1,
+      "tableFirst": 0.75,
+      "zero": 0
+    },
+    "dates": {
+      "cases": 10,
+      "passed": 10,
+      "targets": 10,
+      "hit1": 0.9,
+      "hit3": 0.9,
+      "mrr": 0.925,
+      "tableFirst": 1,
+      "zero": 0
+    },
+    "months": {
+      "cases": 6,
+      "passed": 4,
+      "targets": 6,
+      "hit1": 0.6666666666666666,
+      "hit3": 0.6666666666666666,
+      "mrr": 0.6666666666666666,
+      "tableFirst": 0.6666666666666666,
+      "zero": 0.3333333333333333
+    },
+    "phones": {
+      "cases": 8,
+      "passed": 7,
+      "targets": 8,
+      "hit1": 0.875,
+      "hit3": 0.875,
+      "mrr": 0.875,
+      "tableFirst": 0.875,
+      "zero": 0.125
+    },
+    "emails": {
+      "cases": 6,
+      "passed": 5,
+      "targets": 6,
+      "hit1": 0.8333333333333334,
+      "hit3": 0.8333333333333334,
+      "mrr": 0.8333333333333334,
+      "tableFirst": 1,
+      "zero": 0
+    },
+    "multi-word": {
+      "cases": 7,
+      "passed": 7,
+      "targets": 7,
+      "hit1": 1,
+      "hit3": 1,
+      "mrr": 1,
+      "tableFirst": 1,
+      "zero": 0
+    },
+    "balance": {
+      "cases": 7,
+      "passed": 7,
+      "targets": 1,
+      "hit1": 1,
+      "hit3": 1,
+      "mrr": 1,
+      "tableFirst": 1,
+      "zero": 0
+    },
+    "routing": {
+      "cases": 7,
+      "passed": 7,
+      "targets": 0,
+      "hit1": null,
+      "hit3": null,
+      "mrr": null,
+      "tableFirst": null,
+      "zero": 0
+    },
+    "best": {
+      "cases": 9,
+      "passed": 9,
+      "targets": 0,
+      "hit1": null,
+      "hit3": null,
+      "mrr": null,
+      "tableFirst": null,
+      "zero": 0
+    },
+    "table-order": {
+      "cases": 12,
+      "passed": 5,
+      "targets": 12,
+      "hit1": 1,
+      "hit3": 1,
+      "mrr": 1,
+      "tableFirst": 0.4166666666666667,
+      "zero": 0
+    },
+    "long": {
+      "cases": 15,
+      "passed": 12,
+      "targets": 15,
+      "hit1": 0.8,
+      "hit3": 0.8,
+      "mrr": 0.8,
+      "tableFirst": 0.6666666666666666,
+      "zero": 0.2
+    }
+  },
+  "cases": {
+    "names|Murphy": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": false,
+      "zero": false
+    },
+    "names|Siobhan": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": false,
+      "zero": false
+    },
+    "names|Siobhan Murphy": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": false,
+      "zero": false
+    },
+    "names|matt nav": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": false,
+      "zero": false
+    },
+    "names|Matt Navarre": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": false,
+      "zero": false
+    },
+    "names|Mary Navarre": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": false,
+      "zero": false
+    },
+    "names|Umbridge": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": false,
+      "zero": false
+    },
+    "names|Whitfield": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": false,
+      "zero": false
+    },
+    "names|MATT NAVARRE": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": false,
+      "zero": false
+    },
+    "names|  matt   navarre  ": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": false,
+      "zero": false
+    },
+    "names|Ματίας": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": false,
+      "zero": false
+    },
+    "names|Hank": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "names|\"Cardiac Clinic\"": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "names|cardiac": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "nicknames|Bob Whitfield": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": false,
+      "zero": false
+    },
+    "nicknames|Peg Halloran": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": false,
+      "zero": false
+    },
+    "nicknames|Mike Smith": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": false,
+      "zero": false
+    },
+    "nicknames|Liz Smith": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": false,
+      "zero": false
+    },
+    "nicknames|Pat Miller": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": false,
+      "zero": false
+    },
+    "nicknames|Jim Navarre": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": false,
+      "zero": false
+    },
+    "nicknames|Rob Brown": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": false,
+      "zero": false
+    },
+    "nicknames|Sophie Smith": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": false,
+      "zero": false
+    },
+    "nicknames|Matthew Navarre": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": false,
+      "zero": false
+    },
+    "nicknames|Dave Davis": {
+      "level": "should",
+      "pass": true,
+      "rank": 3,
+      "tableFirst": true,
+      "zero": false
+    },
+    "nicknames|Nick Nikolaidis": {
+      "level": "should",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": false,
+      "zero": false
+    },
+    "nicknames|Whitfield Bob": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": false,
+      "zero": false
+    },
+    "typos|Daren Umbrige": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "typos|Shavon Murphy": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": false,
+      "zero": false
+    },
+    "typos|Shavon": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": false,
+      "zero": false
+    },
+    "typos|Wittfield": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "typos|Kostas Garca": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "typos|Mueller": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "typos|Papadopolous": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "typos|Hanks Used Nuclear": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "typos|Quietwatter Salvage": {
+      "level": "should",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "typos|Pheonix Cardiac": {
+      "level": "should",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "typos|Reserve Gheisha": {
+      "level": "should",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "typos|Canvass Sneakers": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "typos|Chromebok": {
+      "level": "should",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "last-first|Whitfield, Robert": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": false,
+      "zero": false
+    },
+    "last-first|Navarre, Matt": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": false,
+      "zero": false
+    },
+    "last-first|Halloran, Margaret": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": false,
+      "zero": false
+    },
+    "last-first|Navarre, Mary": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": false,
+      "zero": false
+    },
+    "last-first|Whitfield, Bob": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": false,
+      "zero": false
+    },
+    "last-first|Navarre Matt": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": false,
+      "zero": false
+    },
+    "numbers|45": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": false,
+      "zero": false
+    },
+    "numbers|$65": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "numbers|1099": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "numbers|40...70": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "numbers|>2000": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "numbers|<10": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "numbers|<=45": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "numbers|1.5": {
+      "level": "should",
+      "pass": true,
+      "rank": null,
+      "tableFirst": null,
+      "zero": true
+    },
+    "numbers|16": {
+      "level": "should",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": false,
+      "zero": false
+    },
+    "dates|3/4/2019": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "dates|2019-03-04": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "dates|2026-05-20": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "dates|5/20/2026": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "dates|19.3.2019": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "dates|4.3.2019": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "dates|3/1/2026...3/31/2026": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "dates|2026-01-01...2026-01-31": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "dates|>=2026-05-01": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "dates|2019": {
+      "level": "must",
+      "pass": true,
+      "rank": 4,
+      "tableFirst": true,
+      "zero": false
+    },
+    "months|3/2019": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "months|2019-03": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "months|2026-05": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "months|1/2026": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "months|March 2019": {
+      "level": "should",
+      "pass": false,
+      "rank": null,
+      "tableFirst": false,
+      "zero": true
+    },
+    "months|June 2026": {
+      "level": "should",
+      "pass": false,
+      "rank": null,
+      "tableFirst": false,
+      "zero": true
+    },
+    "phones|+11 629 773 9565": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "phones|773-9565": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "phones|6297739565": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "phones|9565": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "phones|1152": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "phones|7054": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "phones|+41 969 174 1152": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "phones|5-20-2026": {
+      "level": "should",
+      "pass": false,
+      "rank": null,
+      "tableFirst": false,
+      "zero": true
+    },
+    "emails|matt.navarre@example.com": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "emails|robert.whitfield@": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "emails|whitfield@example.com": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "emails|matt.navarre@": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "emails|john.costa24": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "emails|@example.com": {
+      "level": "should",
+      "pass": false,
+      "rank": null,
+      "tableFirst": true,
+      "zero": false
+    },
+    "multi-word|Reserve Geisha": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "multi-word|Over-ear ANC": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "multi-word|iPhone 15": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "multi-word|Atlas & Co": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "multi-word|Matt Navarre": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "multi-word|Hank's Used Nuclear Reactor Parts": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "multi-word|Espresso Pods": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "balance|Navarre": {
+      "level": "must",
+      "pass": true,
+      "rank": null,
+      "tableFirst": null,
+      "zero": false
+    },
+    "balance|Bluewater": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "balance|Greece": {
+      "level": "must",
+      "pass": true,
+      "rank": null,
+      "tableFirst": null,
+      "zero": false
+    },
+    "balance|Matt": {
+      "level": "must",
+      "pass": true,
+      "rank": null,
+      "tableFirst": null,
+      "zero": false
+    },
+    "balance|john costa": {
+      "level": "must",
+      "pass": true,
+      "rank": null,
+      "tableFirst": null,
+      "zero": false
+    },
+    "balance|45": {
+      "level": "must",
+      "pass": true,
+      "rank": null,
+      "tableFirst": null,
+      "zero": false
+    },
+    "balance|Whitfield": {
+      "level": "must",
+      "pass": true,
+      "rank": null,
+      "tableFirst": null,
+      "zero": false
+    },
+    "routing|40...70": {
+      "level": "must",
+      "pass": true,
+      "rank": null,
+      "tableFirst": null,
+      "zero": false
+    },
+    "routing|3/1/2026...3/31/2026": {
+      "level": "must",
+      "pass": true,
+      "rank": null,
+      "tableFirst": null,
+      "zero": false
+    },
+    "routing|>=2026-05-01": {
+      "level": "must",
+      "pass": true,
+      "rank": null,
+      "tableFirst": null,
+      "zero": false
+    },
+    "routing|3/2019": {
+      "level": "must",
+      "pass": true,
+      "rank": null,
+      "tableFirst": null,
+      "zero": false
+    },
+    "routing|matt.navarre@example.com": {
+      "level": "must",
+      "pass": true,
+      "rank": null,
+      "tableFirst": null,
+      "zero": false
+    },
+    "routing|1099": {
+      "level": "must",
+      "pass": true,
+      "rank": null,
+      "tableFirst": null,
+      "zero": false
+    },
+    "routing|nonsense": {
+      "level": "must",
+      "pass": true,
+      "rank": null,
+      "tableFirst": null,
+      "zero": true
+    },
+    "best|Bob Whitfield": {
+      "level": "must",
+      "pass": true,
+      "rank": null,
+      "tableFirst": null,
+      "zero": false
+    },
+    "best|Peg Halloran": {
+      "level": "must",
+      "pass": true,
+      "rank": null,
+      "tableFirst": null,
+      "zero": false
+    },
+    "best|1099": {
+      "level": "must",
+      "pass": true,
+      "rank": null,
+      "tableFirst": null,
+      "zero": false
+    },
+    "best|Navarre": {
+      "level": "must",
+      "pass": true,
+      "rank": null,
+      "tableFirst": null,
+      "zero": false
+    },
+    "best|john costa": {
+      "level": "must",
+      "pass": true,
+      "rank": null,
+      "tableFirst": null,
+      "zero": false
+    },
+    "best|Bluewater": {
+      "level": "must",
+      "pass": true,
+      "rank": null,
+      "tableFirst": null,
+      "zero": false
+    },
+    "best|Atlas": {
+      "level": "must",
+      "pass": true,
+      "rank": null,
+      "tableFirst": null,
+      "zero": false
+    },
+    "best|iphone": {
+      "level": "must",
+      "pass": true,
+      "rank": null,
+      "tableFirst": null,
+      "zero": false
+    },
+    "best|40...70": {
+      "level": "must",
+      "pass": true,
+      "rank": null,
+      "tableFirst": null,
+      "zero": false
+    },
+    "table-order|Whitfield": {
+      "level": "should",
+      "pass": false,
+      "rank": 1,
+      "tableFirst": false,
+      "zero": false
+    },
+    "table-order|Siobhan Murphy": {
+      "level": "should",
+      "pass": false,
+      "rank": 1,
+      "tableFirst": false,
+      "zero": false
+    },
+    "table-order|Matt Navarre": {
+      "level": "should",
+      "pass": false,
+      "rank": 1,
+      "tableFirst": false,
+      "zero": false
+    },
+    "table-order|Bob Whitfield": {
+      "level": "should",
+      "pass": false,
+      "rank": 1,
+      "tableFirst": false,
+      "zero": false
+    },
+    "table-order|Navarre": {
+      "level": "should",
+      "pass": false,
+      "rank": 1,
+      "tableFirst": false,
+      "zero": false
+    },
+    "table-order|45": {
+      "level": "should",
+      "pass": false,
+      "rank": 1,
+      "tableFirst": false,
+      "zero": false
+    },
+    "table-order|16": {
+      "level": "should",
+      "pass": false,
+      "rank": 1,
+      "tableFirst": false,
+      "zero": false
+    },
+    "table-order|Hank": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "table-order|Atlas & Co": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "table-order|Reserve Geisha": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "table-order|773-9565": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "table-order|iPhone 15": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "long|Matt Navarre Athens Greece primary": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "long|Robert Whitfield Lyon France": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": false,
+      "zero": false
+    },
+    "long|Siobhan Murphy Athens Greece": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": false,
+      "zero": false
+    },
+    "long|Hank's Used Nuclear Reactor Parts Rome Italy": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "long|Quietwater Maritime Salvage Rethymno": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "long|Phoenix Cardiac Clinic Portland USA Healthcare": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "long|Canvas Sneakers shoes budget": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "long|Over-ear ANC headphones": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "long|Reserve Geisha coffee": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "long|find Bob Whitfield please": {
+      "level": "should",
+      "pass": false,
+      "rank": null,
+      "tableFirst": false,
+      "zero": true
+    },
+    "long|contact Matt Navarre": {
+      "level": "should",
+      "pass": false,
+      "rank": null,
+      "tableFirst": false,
+      "zero": true
+    },
+    "long|Matt Navarre person": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "long|Robert Whitfield Basel": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "long|Atlas Trust company": {
+      "level": "must",
+      "pass": true,
+      "rank": 1,
+      "tableFirst": true,
+      "zero": false
+    },
+    "long|Reserve Geisha coffee beans": {
+      "level": "should",
+      "pass": false,
+      "rank": null,
+      "tableFirst": false,
+      "zero": true
+    }
+  }
+}
