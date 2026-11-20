@@ -1,5 +1,7 @@
 # Mitos rules
 
+*For people changing Mitos's code. Not for everyday users: start at the [README](README.md).*
+
 The living rulebook. These are enforced in code; changes here should be
 reflected there.
 

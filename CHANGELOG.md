@@ -6,12 +6,12 @@ Newest first. The commit log has the detail; this is the story.
 
 The first release Matt calls finished. There is no 1.0: it went from 0.9.4 straight here.
 
-- **Sign-in page.** The bare address asks for the key and keeps a session cookie (only its hash is stored). Five wrong keys pause sign-in for a minute. A page opened with `?key=` signs itself in, so a FileMaker web viewer still works with one URL.
+- **Sign-in page.** The bare address asks for the site password and keeps a session cookie (only its hash is stored). Five wrong passwords pause sign-in for a minute. A page opened with the site password in the URL (`?key=`) signs itself in, so a FileMaker web viewer still works with one URL.
 - **Settings tab**, last: machine, memory, disk, copy size, last sync, version and build. The **Danger zone** sits under it: reset, drop a synced copy, rebuild the index, forget AI notes, sign everyone out.
 - **Record by record.** `POST /api/records/changed` answers at once and works behind. The kit's "Mitos - Record Changed" script sends it after a commit through Perform Script on Server, so FileMaker shows no "Transferring URL". The Log tab's Record updates list puts unknown tables and missing records on top, in red.
 - **Duplicate primary keys never stop a sync.** Mitos re-reads the twins, keeps the newer one, and says which ID to fix in FileMaker. Unticking a table removes its copy too, after a confirm that names it.
 - **Semantic search per table.** A switch and the vector count and size for each indexed table. Turning semantic search off warns first, then deletes the vectors to free disk.
-- **Models come from navarre.ai/ai-models.json**, the same list Pythia and Clio read, refreshed every 12 hours and whenever a key is saved. Menus are grouped by job, with a recommended pick per stage.
+- **Models come from navarre.ai/ai-models.json**, the same list Pythia and Clio read, refreshed every 12 hours and whenever an API key is saved. Menus are grouped by job, with a recommended pick per stage.
 - **Best match by the gap.** Every typed word has to match, and the next result has to be well behind. "Use AI to determine best match" is a switch under it. No "why" line under results any more.
 - **Thinking models fit their budget.** A Claude model that thinks first no longer runs out of answer and fails the enrichment test; when one does, the message says so.
 - Keep working while a sync runs, with a strip at the top. The deletion check shows progress. Changing a table's fields warns that it re-reads the table.
@@ -51,8 +51,8 @@ The first release Matt calls finished. There is no 1.0: it went from 0.9.4 strai
 - Deterministic, type-aware search: the whole input is read as one kind (words, number, range, date, date range, month, email, phone) and only the fields that can hold that kind are searched. Every hit carries a reason in words. Results are balanced across tables.
 - The name table (Bob finds Robert) and close spellings by Jaro-Winkler, both without a model.
 - Five optional AI stages, each with its own switch, model and time budget: close spellings, similar meaning (vectors in their own DuckDB file), search notes written at sync time, reading the search into the engine's syntax, and picking the best match. A late or broken stage never removes an exact hit.
-- Two-phase search: `GET /api/search` answers in tens of milliseconds; `GET /api/search/ai` fills in the model stages behind it. Four providers (Anthropic, OpenAI, Google, Voyage), raw fetch, keys in Settings.
-- The eight-step setup wizard: Connect (tested before it is saved), Files, AI key, Scan with progress, Tables, AI stages, Sync, Add to your file. Save a Copy as XML hints for real names and keys.
+- Two-phase search: `GET /api/search` answers in tens of milliseconds; `GET /api/search/ai` fills in the model stages behind it. Four providers (Anthropic, OpenAI, Google, Voyage), raw fetch, API keys in Settings.
+- The eight-step setup wizard: Connect (tested before it is saved), Files, API key, Scan with progress, Tables, AI stages, Sync, Add to your file. Save a Copy as XML hints for real names and keys.
 - Streaming sync: pages go to disk as they arrive with a checkpoint per page and resume after a crash; the index step reads 20,000 rows a batch; a crash report names the table and the machine size; free disk is checked before a full pull.
 - Quoted `$select` so FileMaker Server 2026 honors a field list (a full 10,511-row pull went from six minutes to 8.5 seconds); whole rows only after both encodings are refused.
 - The paid-pass gate: switching semantic search or enrichment on shows the count and the price first; a plain sync caps at 5,000 vectors and 1,000 notes; a ledger of every paid pass.

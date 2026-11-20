@@ -1,5 +1,7 @@
 # Extending Mitos
 
+*For people changing Mitos's code. Not for everyday users: start at the [README](README.md).*
+
 Mitos is meant to be forked. It is small on purpose: one runtime dependency,
 no build step, a UI in two files, DuckDB as a subprocess. You and an AI
 coding tool can read the whole thing in one sitting and change it with
@@ -65,7 +67,7 @@ The five stages share one shape, and a sixth follows it. (Best match is a plain 
 
 1. **Config.** Add a block to `STAGE_DEFAULTS` in `ai.js` with `on: false`,
    a `model: ""` if it needs one (a blank model resolves to the fast model
-   of the first provider with a key), and its numbers. Add the allowed
+   of the first provider with an API key), and its numbers. Add the allowed
    ranges to `STAGE_LIMITS`; `POST /api/config` clamps to them. `stages()`
    and `stageReady()` then know it; `STAGE_NAMES` lists it; the boot line
    prints it.
@@ -91,7 +93,7 @@ About a day, most of it in the page.
 ### Add a provider
 
 `ai.js` decides the provider from the model name (`providerOf`), so a
-provider is a name pattern, a key, and a door.
+provider is a name pattern, an API key, and a door.
 
 1. `PROVIDERS`: label, the config key, the env variable, `chat` and `embed`
    flags. `providerOf()`: the model-name pattern. `FAST_CHAT`,
@@ -102,12 +104,12 @@ provider is a name pattern, a key, and a door.
    provider's request limit. Return vectors in input order; `normalize()`
    does the rest.
 4. `server.js`: `POST /api/ai/test` needs a cheap authenticated call for
-   the key check; `GET /api/ai/models` needs either a live list or a fixed
+   the API key check; `GET /api/ai/models` needs either a live list or a fixed
    list (`GOOGLE_FIXED` is the pattern) and a `modelFamily()` entry so
    `curateModels()` keeps it. `PRICES` for the estimate.
 5. `public/app.js`: the provider chip on the AI tab.
 
-Half a day. The key stays in `config.json` like the others; document it in
+Half a day. The API key stays in `config.json` like the others; document it in
 `SECURITY.md`.
 
 ### Add a query kind
@@ -177,7 +179,7 @@ cases run against the bundled sample, so a case needs a sample record; add
 one to the CSV if the shape you are proving does not exist yet.
 
 For behavior on real data and for the model stages, `npm run simulate --
---base <url> --key <key> --compare "exact,fuzzy"
+--base <url> --key <site password> --compare "exact,fuzzy"
 "exact,fuzzy,semantic,understand,rerank" --ai` on a running instance. The
 report lands in `eval/sim-*.md`. Read the misses before trusting the number;
 the handoff notes explain which "misses" are duplicate titles.

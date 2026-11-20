@@ -1,5 +1,7 @@
 # Mitos, explained to an AI agent
 
+*For AI agents (and the people steering them) installing, running or changing Mitos's code. Not for everyday users: start at the [README](README.md).*
+
 You are probably an AI coding agent. Someone wants Mitos installed, run,
 tested, or changed. Read this first; it is written for you.
 
@@ -30,7 +32,7 @@ What it is not: a chatbot, a report tool (that is Pythia), or a log service
 - **Never invent the Fly app name.** The app is theirs. Do not default to
   "mitos", "navarre" or a name taken from this repo.
 - **Never commit or print secrets.** `.env`, `data/` and `fly.toml` are
-  gitignored. Keep them that way. Do not echo keys or passwords.
+  gitignored. Keep them that way. Do not echo API keys or passwords.
 - **No deploy unless the person says so.** A past deploy is not standing
   permission. `fly deploy` only on an explicit instruction, each time.
 - **On failure, diagnose.** `TROUBLESHOOTING.md` lists the real failures and
@@ -50,19 +52,19 @@ Windows, plain PowerShell:
 irm https://navarre.ai/get/mitos.ps1 | iex
 ```
 
-`README.md` says the installer installs the Fly CLI if needed, asks for a
+`INSTALL.md` says the installer installs the Fly CLI if needed, asks for a
 name and a region, builds Mitos in Fly's cloud, and opens the browser with
-the key. The installer script itself is not in this repo, so its
+the site password. The installer script itself is not in this repo, so its
 flags are unverified here. What this repo does show:
 
 - `fly.template.toml` is the shape of the `fly.toml` it writes: the app
   name, the region, a `shared-cpu-1x` machine with 512 MB, a volume named
   `mitos_data` mounted at `/data`, `force_https`, and
   `auto_stop_machines = "suspend"` with `min_machines_running = 0`.
-- The site key is read from the `SITE_PASSWORD` environment variable
+- The site password is read from the `SITE_PASSWORD` environment variable
   (`server.js`). With it set, a page asks for it at `/signin` and keeps a
-  session cookie (30 days, only a hash stored); five wrong keys pause
-  sign-in for a minute. `?key=<key>` on a page signs in and redirects
+  session cookie (30 days, only a hash stored); five wrong passwords pause
+  sign-in for a minute. the site password in the URL (`?key=`) on a page signs in and redirects
   without it (a FileMaker web viewer). `/api/` routes also take `?key=` or
   HTTP Basic auth. With no `SITE_PASSWORD` there is no gate.
 - `Dockerfile` builds from `node:26-slim` and installs the DuckDB CLI 1.5.6.
@@ -76,7 +78,7 @@ Console, Connectors) and an account whose privilege set has the `fmodata`
 extended privilege in each file to search. Mitos doesn't use the
 Data API. Use a read-only account.
 
-## Run it locally (sample mode, no FileMaker, no key)
+## Run it locally (sample mode, no FileMaker, no API key)
 
 ```bash
 npm install     # postinstall fetches the DuckDB CLI into ./bin (Mac, Linux)
@@ -97,7 +99,7 @@ Facts that matter when you run it:
 - `DATA_DIR=<dir>` moves every data file (the index, the config, the logs).
   Use a scratch directory for experiments. `PORT` sets the port (8080).
 - Boot never syncs. Boot prints four lines: the URL, `fm: configured` or
-  `not configured (sample mode)`, the naming model and key source, and one
+  `not configured (sample mode)`, the naming model and API key source, and one
   `on`/`off`/`on, no <provider> key` per stage. An empty index prints
   `index is empty. Open Settings, choose tables, and press Sync now.`
 - With no AI key everything deterministic works: the exact search, the
@@ -123,12 +125,12 @@ There is no unit test suite. `npm test` does not exist. The checks are:
   `--concurrency` above 4 measures the DuckDB queue, not the search.
 - `node scripts/check-order.mjs`: proves the one display-name map. Prints
   PASS or FAIL.
-- `curl "$URL/api/health?key=$KEY"` for liveness.
+- `curl "$URL/api/health?key=$SITE_PASSWORD"` for liveness.
 
 ## The API, one line each
 
-All routes sit behind the key (session cookie, `?key=`, or Basic auth). `GET` routes work from a FileMaker
-web viewer or `Insert from URL` with `?key=<key>`.
+All routes sit behind the site password (session cookie, `?key=`, or Basic auth). `GET` routes work from a FileMaker
+web viewer or `Insert from URL` with the site password in the URL. The full list with detail is in [API.md](API.md).
 
 | Route | What it does |
 |---|---|
@@ -156,8 +158,8 @@ web viewer or `Insert from URL` with `?key=<key>`.
 | `POST /api/schema/saxml` | Upload a Save a Copy as XML export (hints: real names, keys, mod fields, stored calcs). |
 | `GET` / `DELETE /api/schema/hints[/:file]` | Read or forget those hints. |
 | `GET /api/disk` | Free bytes on the data volume. |
-| `GET /api/ai/models` | Curated model lists per provider with a key. `?refresh=1`. |
-| `POST /api/ai/test` | Prove a key, or run one stage once and time it (`which`: naming, understand, semantic, rerank, enrich). |
+| `GET /api/ai/models` | Curated model lists per provider with an API key. `?refresh=1`. |
+| `POST /api/ai/test` | Prove an API key, or run one stage once and time it (`which`: naming, understand, semantic, rerank, enrich). |
 | `GET /api/ai/estimate` | What a paid Run would do and cost, plus the ledger of past passes. |
 | `POST /api/ai/enrich-preview` | Sample search notes for a few records, nothing saved. |
 | `POST /api/ai/enrich/forget` | Delete a table's search notes on purpose. |

@@ -204,8 +204,8 @@ if (SITE_PASSWORD) {
 <body>
 <form method="post" action="/signin">
   <h1>Mitos</h1>
-  <p>Enter your key to search.</p>
-  <input type="password" name="key" autocomplete="current-password" aria-label="Key" autofocus required>
+  <p>Enter the site password to search.</p>
+  <input type="password" name="key" autocomplete="current-password" aria-label="Site password" autofocus required>
   <input type="hidden" name="next" value="${esc(next)}">
   <button type="submit">Sign in</button>
   ${message ? `<p class="msg" role="alert">${esc(message)}</p>` : ""}
@@ -221,7 +221,7 @@ if (SITE_PASSWORD) {
     if (tooMany(ip)) return signinHeaders(res).status(429).send(signinPage(next, TOO_MANY));
     if (!keyMatches(req.body?.key)) {
       missKey(ip);
-      return signinHeaders(res).status(401).send(signinPage(next, "That key didn't work."));
+      return signinHeaders(res).status(401).send(signinPage(next, "That password didn't work."));
     }
     misses.delete(ip);
     startSession(req, res);
@@ -254,7 +254,7 @@ if (SITE_PASSWORD) {
       }
       if (sessionOk(req)) return next(); // already signed in; a stale key in the address changes nothing
       missKey(ip);
-      return signinHeaders(res).status(401).send(signinPage(safeNext(here), "That key didn't work."));
+      return signinHeaders(res).status(401).send(signinPage(safeNext(here), "That password didn't work."));
     }
     if (sessionOk(req)) return next();
     if (isApi) {

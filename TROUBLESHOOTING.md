@@ -2,7 +2,7 @@
 
 Every entry here is a failure that happened, with the words Mitos prints and
 what to do. Read the first section before you install; it prevents most of
-them.
+them. The setup itself is in [INSTALL.md](INSTALL.md).
 
 ## Before you start: what you need, and what you do not
 
@@ -13,8 +13,8 @@ You need three things:
 2. **A hosted FileMaker file with OData on**, and an account for Mitos whose
    privilege set has the `fmodata` extended privilege in each file to search.
    Read-only. No file handy? Skip it; Mitos runs on sample data.
-3. **One AI key, optional.** Without it the exact search, close spellings and
-   the name table all work. A key adds table naming and the model stages.
+3. **One AI API key, optional.** Without it the exact search, close spellings and
+   the name table all work. An API key adds table naming and the model stages.
 
 You do not need Docker, Node, git or a copy of this repo to install on Fly.
 Those are for running Mitos on your own machine.
@@ -33,9 +33,9 @@ Windows, in PowerShell:
 irm https://navarre.ai/get/mitos.ps1 | iex
 ```
 
-The installer is not part of this repo. `README.md` says it installs the
+The installer is not part of this repo. `INSTALL.md` says it installs the
 Fly CLI if needed, asks a name and a region, builds in the cloud, and opens
-the browser with your key. Save the key.
+the browser with your site password. Save the site password.
 
 Using an AI tool? Point it at `AGENTS.md`. The install is one command; a
 good run needs a handful of approvals, not dozens.
@@ -145,13 +145,13 @@ the volume in Fly (`fly volumes extend`) and sync again.
 exceeded. Add credit to the <Provider> account, then Run again.` For Google:
 `Enable billing on the Google AI project, then Run again.`
 
-**Cause.** The embedding provider answered 429 or a quota message. The key is
+**Cause.** The embedding provider answered 429 or a quota message. The API key is
 fine; the account is out of credit or over its limit. Mitos gives a 429 up
 to four attempts with a growing pause, then stops the pass and keeps every
 vector already written.
 
 **Fix.** Add credit, then AI tab, Paid passes, **Run**. A plain sync embeds
-at most 5,000 new rows; Run does the rest. A refused key (401, 403) says
+at most 5,000 new rows; Run does the rest. A refused API key (401, 403) says
 `refused this key. Check the key on the AI tab`; a silent provider says
 `did not answer. Check the connection`.
 
@@ -170,16 +170,16 @@ keeps the event stream alive, so a sync you watch is not affected.
 
 - Keep a tab open on the sync overlay while it runs.
 - Let FileMaker Server be the clock: a script schedule with one `Insert from
-  URL` step, `POST https://<app>.fly.dev/api/index/sync?key=<key>`, and
-  a loop that reads `GET /api/index/job?key=<key>` until `running` is
+  URL` step, `POST https://<app>.fly.dev/api/index/sync?key=<site password>`, and
+  a loop that reads `GET /api/index/job?key=<site password>` until `running` is
   false. The requests keep the machine awake and the overdue timer catches
   up on the next tick.
 - Set `min_machines_running = 1` in your `fly.toml` and deploy. The machine
   never sleeps; it costs more.
 
-## Lost the key
+## Lost the site password
 
-The key is the `SITE_PASSWORD` environment variable on the Fly machine.
+The site password is the `SITE_PASSWORD` environment variable on the Fly machine.
 Read it back:
 
 ```bash
@@ -192,7 +192,7 @@ Or set a new one (this restarts the machine; everyone signs in again):
 fly secrets set SITE_PASSWORD=<new> -a <app>
 ```
 
-That the installer stores it as a Fly secret is what `README.md` implies;
+That the installer stores it as a Fly secret is what `INSTALL.md` implies;
 the installer is not in this repo, so check with `fly secrets list -a <app>`.
 
 ## Tables have odd names, or "names are guessed"
@@ -201,13 +201,13 @@ the installer is not in this repo, so check with `fly secrets list -a <app>`.
 status said `Naming tables (no AI key: names are guessed)`. `GET
 /api/fm/tables` reports `naming.source: heuristic`.
 
-**Cause.** No chat key was set when the scan ran, or the naming model was
+**Cause.** No chat API key was set when the scan ran, or the naming model was
 refused. The heuristic strips prefixes and underscores and guesses which
 tables are worth searching from the name alone. It never picks a title
 field.
 
-**Fix.** Add a key on the AI tab, then **Name tables now** on the Tables tab
-(`GET /api/fm/tables?rename=1`). A key added after a heuristic scan also
+**Fix.** Add an API key on the AI tab, then **Name tables now** on the Tables tab
+(`GET /api/fm/tables?rename=1`). An API key added after a heuristic scan also
 re-names on the next scan. Rename any table by hand on its row; a saved name
 always wins. Upload a Save a Copy as XML export for the real table names.
 
@@ -239,23 +239,23 @@ first one every time.
 `nga-artwork`). A word saved with an underscore fails on its next save;
 pick a new one and update the branch in `Mitos - Go To Record`.
 
-## The sign-in page shows up, or "That key didn't work."
+## The sign-in page shows up, or "That password didn't work."
 
-**What you see.** A page with one key field, or `That key didn't work.`
-after you typed one. From a script, `401 Not signed in.` Five wrong keys in
+**What you see.** A page with one password field, or `That password didn't work.`
+after you typed one. From a script, `401 Not signed in.` Five wrong passwords in
 a row pause sign-in for a minute.
 
-**Cause.** The address was opened without a signed-in session and without a
-right `?key=`. A session lasts 30 days, and **Sign out all** (Settings,
+**Cause.** The address was opened without a signed-in session and without the
+site password in the URL (`?key=`). A session lasts 30 days, and **Sign out all** (Settings,
 Danger zone) ends every one. A FileMaker web viewer can't answer a Basic
-auth prompt, and it may not keep the cookie, so it needs the key in its
+auth prompt, and it may not keep the cookie, so it needs the site password in its
 address.
 
-**Fix.** Type the key. In a web viewer, point it at
-`https://<app>.fly.dev/?key=<key>`; Mitos signs in and lands on the same
-address without the key. For a card window, add `&embed=1&q=<the words>`;
+**Fix.** Type the site password. In a web viewer, point it at
+`https://<app>.fly.dev/?key=<site password>`; Mitos signs in and lands on the same
+address without it. For a card window, add `&embed=1&q=<the words>`;
 do not URL-encode the words in the script, Set Web Viewer encodes the URL
-itself. A script that calls `/api/` sends `?key=<key>` or Basic auth.
+itself. A script that calls `/api/` sends the site password as `?key=` or Basic auth.
 
 ## A click on a result does nothing in FileMaker
 
@@ -267,7 +267,7 @@ script has no branch for the table word that was clicked.
 **Fix.** Tick the option in the web viewer setup. Keep the script names from
 the kit. Fill in one branch per searched table in `Mitos - Go To Record`:
 the table word, the layout, the primary key field. Steps in
-`filemaker/README.md`.
+[filemaker/README.md](filemaker/README.md).
 
 ## `POST /api/records/changed` answers 202
 
@@ -278,7 +278,7 @@ for it to finish.
 **If the record never updates.** The kit's `Mitos - Record Changed` script
 runs through Perform Script on Server, with the account's privileges, so
 **Insert from URL has to be allowed** for that account. Also check the `$url`
-line has `/api/records/changed?key=` and your key, and that the layout has
+line has `/api/records/changed?key=` and your site password, and that the layout has
 an OnRecordCommit trigger that runs the script.
 
 **Fix.** Nothing. Check the Log tab under Record updates: an unknown table

@@ -1,5 +1,7 @@
 # Gotchas
 
+*For people changing Mitos's code. Not for everyday users: start at the [README](README.md).*
+
 Hard-won platform quirks and their fixes. Each entry: symptom, cause, where it's
 handled. Add to this file the moment a quirk costs you more than ten minutes;
 future you (and any AI session working on this code) reads this before fm.js.
