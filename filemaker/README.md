@@ -9,9 +9,8 @@ The timed sync still runs as the safety net either way.
 
 The pieces ship in one small file, **Mitos.fmp12**
 (https://navarre.ai/files/Mitos.fmp12). Its `Install` layout shows the
-same steps as https://navarre.ai/mitos/start. `Mitos Kit.xml` here is the
-scripts as a clipboard snippet, for people who prefer to paste (check that
-it includes **Mitos - Record Changed**, since the XML here has the first two only; the file is the reference).
+same steps as https://navarre.ai/mitos/start. Open it next to your file and
+copy and paste.
 
 ## What's in the kit
 
@@ -23,8 +22,8 @@ Three scripts, plus one layout trigger step:
 | **Mitos - Go To Record** | Runs when someone clicks a result. Finds that record in your file and shows it. Mitos calls it by name. |
 | **Mitos - Record Changed** | Optional, hidden. Tells Mitos a record was just saved, so it refreshes at once. |
 
-The **OnRecordCommit** layout trigger, on each layout whose table Mitos
-searches, is what runs *Mitos - Record Changed* (step 5 below).
+*Mitos - Record Changed* isn't part of the install. It has its own page:
+[RECORD-UPDATES.md](RECORD-UPDATES.md).
 
 ## Install
 
@@ -44,13 +43,9 @@ searches, is what runs *Mitos - Record Changed* (step 5 below).
    find on. The table words are in Mitos under Settings, Tables ("sent to
    FileMaker as"): lowercase letters, digits, hyphens or underscores, unique
    per table.
-5. **Record by record (optional).** Copy **Mitos - Record Changed** (hidden
-   in the kit) into your file and keep its name. Paste your Mitos address
-   into the `$url` line, in the `/api/records/changed?key=` form (the site password again). On each
-   layout whose table Mitos searches, add an **OnRecordCommit** layout
-   trigger that runs it, with the parameter
-   `JSONSetElement ( "{}" ; [ "id" ; Table::PrimaryKey ; JSONString ] )`.
-   Or leave the parameter empty and edit the `$id` line to your key field.
+
+Want a saved record in search right away? That's optional and separate:
+[RECORD-UPDATES.md](RECORD-UPDATES.md).
 
 ## What Mitos sends
 
@@ -63,17 +58,6 @@ A click on a result runs `Mitos - Go To Record` with:
 mode, goes to the layout for that table, puts `id` in the key field and
 performs the find. A record deleted since the last sync finds nothing; the
 script says so.
-
-## Record Changed: what it does
-
-`POST /api/records/changed` with `{ "table": "<table word>", "id": "<primary key>" }`.
-Mitos answers 202 at once and refreshes that record behind, so FileMaker
-never waits. Hosted on FileMaker Server, the script hands itself to the
-server (Perform Script on Server, wait off), so users never see
-"Transferring URL". Not hosted, it posts in place and the dialog may show.
-The server-side script runs with the account's privileges, so **Insert from
-URL has to be allowed** for that account. Unknown tables and records
-FileMaker no longer has show in red in the Log tab, under Record updates.
 
 ## Hourly sync while Mitos sleeps
 

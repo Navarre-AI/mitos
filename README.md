@@ -73,6 +73,7 @@ The table of exactly what is sent, and the honest limits, are in
 |---|---|
 | [INSTALL.md](INSTALL.md) | Anyone setting Mitos up: before you install, the install, FileMaker, updating |
 | [filemaker/README.md](filemaker/README.md) | The FileMaker developer adding the kit to a file |
+| [filemaker/RECORD-UPDATES.md](filemaker/RECORD-UPDATES.md) | Optional: a saved record in search right away |
 | [HOW-IT-WORKS.md](HOW-IT-WORKS.md) | Anyone curious how a search is read, the AI stages, indexing |
 | [API.md](API.md) | Anyone calling Mitos from a script or a web viewer |
 | [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | When something broke: the exact words Mitos prints, and the fix |

@@ -82,10 +82,10 @@ Unticking a table removes its copy too, after a confirm that names it.
 
 Mitos works with no change to your file: search in the browser, and a result
 opens the record in FileMaker. The kit (**Mitos.fmp12**, three scripts and a
-web viewer) puts the search inside your own layouts and refreshes a record
-the moment it's saved. The web viewer opens Mitos with the site password in
+web viewer) puts the search inside your own layouts. The web viewer opens Mitos with the site password in
 the URL, so there's no sign-in screen to answer. The steps are in
-[filemaker/README.md](filemaker/README.md).
+[filemaker/README.md](filemaker/README.md). Refreshing a record the moment it's
+saved is optional and separate: [filemaker/RECORD-UPDATES.md](filemaker/RECORD-UPDATES.md).
 
 ## Run it on your own machine (no FileMaker required)
 
