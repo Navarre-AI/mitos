@@ -33,6 +33,15 @@ export function setConnection({ host, db, user, pass } = {}) {
   if (pass !== undefined && pass !== "") conn.pass = String(pass);
   discoveredDbs = null; // a connection change invalidates discovery
 }
+// Back to what the server was started with: the FM_* environment, or nothing
+// (Settings, Danger zone, "FileMaker connection and table choice").
+export function resetConnection() {
+  conn.host = String(process.env.FM_HOST || "").trim().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+  conn.dbs = (process.env.FM_DB || "").split(",").map((s) => s.trim()).filter(Boolean);
+  conn.user = process.env.FM_USER || "";
+  conn.pass = process.env.FM_PASS || "";
+  discoveredDbs = null;
+}
 // Run fn() against a candidate connection WITHOUT persisting it (Settings'
 // "Test connection" stages; only Save commits). Single-user app: the short
 // window where other requests see the candidate is acceptable.
@@ -609,14 +618,15 @@ export class Cancelled extends Error {
 
 // A few rows by primary key: the per-record beacon's read. Keys go in
 // batches of 40 as an OR filter; text keys quoted, numeric keys bare.
-export async function fetchRowsByKeys(occurrence, keep, pk, keys, { db, select, numericKey = false } = {}) {
+export async function fetchRowsByKeys(occurrence, keep, pk, keys, { db, select, numericKey = false, shouldStop = () => false } = {}) {
   const out = [];
   const enc = (n) => `%22${encodeURIComponent(n)}%22`;
   for (let i = 0; i < keys.length; i += 40) {
     const batch = keys.slice(i, i + 40);
     const lit = (k) => numericKey ? String(Number(k)) : `'${encodeURIComponent(String(k).replace(/'/g, "''"))}'`;
     const filter = batch.map((k) => `${enc(pk)}%20eq%20${lit(k)}`).join("%20or%20");
-    const rows = await fetchAllRows(occurrence, keep, { db, select, filter, pageSize: 100 });
+    if (shouldStop()) throw new Cancelled(occurrence);
+    const rows = await fetchAllRows(occurrence, keep, { db, select, filter, pageSize: 100, shouldStop });
     out.push(...rows);
   }
   return out;
@@ -630,7 +640,7 @@ export async function fetchRowsByKeys(occurrence, keep, pk, keys, { db, select, 
 // from a checkpoint (store.js keeps one per page). `onProgress` reports
 // rows from the start of the table, so a resumed pull counts from where it
 // left off.
-export async function fetchAllRows(occurrence, keep, { pageSize, onProgress, onNote, onPage, startSkip = 0, filter, orderBy, db, select, stats, shouldStop = () => false } = {}) {
+export async function fetchAllRows(occurrence, keep, { pageSize, onProgress, onNote, onPage, startSkip = 0, filter, db, select, stats, shouldStop = () => false } = {}) {
   const fromDb = db || (await resolveDbs())[0];
   const keepSet = keep && keep.length ? new Set(keep) : null;
   // OData filter: encode spaces only (colons/dashes/T/Z must stay raw for this
@@ -638,10 +648,11 @@ export async function fetchAllRows(occurrence, keep, { pageSize, onProgress, onN
   // A filter arrives either as "field op value" with spaces (the incremental
   // pull) or already encoded (the beacon's key list, which carries %20).
   const filterQ = filter ? `&$filter=${/%20/.test(filter) ? filter : filter.replace(/ /g, "%20")}` : "";
-  // A streamed pull can resume at a $skip after a crash. $skip without an
-  // order is whatever the server feels like, so a resumable pull orders by
-  // the primary key (quoted, like $select names).
-  const orderQ = orderBy ? `&$orderby=%22${encodeURIComponent(orderBy)}%22` : "";
+  // No $orderby: FileMaker sorts the whole table for every $skip page, which
+  // took a 68,777-row pull from a minute to over twenty (2026-09-09). A record
+  // changed mid-pull can shift the paging; a repeat that causes is healed
+  // before indexing (store.js healDuplicates), and the deletion check recounts
+  // before it removes anything.
   // $select earns its keep on wide or calc-heavy tables: the server never
   // evaluates a field we did not ask for. Unstored calculations are the
   // expensive ones, and asking for all of them is what wedges a pull.
@@ -671,7 +682,7 @@ export async function fetchAllRows(occurrence, keep, { pageSize, onProgress, onN
       const ctrl = new AbortController();
       const watch = setInterval(() => { if (shouldStop()) ctrl.abort(); }, 250);
       try {
-        res = await odataGetEntity(fromDb, occurrence, `?$top=${size}&$skip=${skip}${filterQ}${orderQ}${selectQ()}`, 60000, undefined, ctrl.signal);
+        res = await odataGetEntity(fromDb, occurrence, `?$top=${size}&$skip=${skip}${filterQ}${selectQ()}`, 60000, undefined, ctrl.signal);
         break;
       } catch (e) {
         if (shouldStop()) throw new Cancelled(occurrence);
@@ -696,7 +707,7 @@ export async function fetchAllRows(occurrence, keep, { pageSize, onProgress, onN
           // deliberately: refusing it is why we are here.
           // `startSkip: skip` too: the pages before this one are already
           // delivered, and a streamed pull must not hand them over twice.
-          return fetchAllRows(occurrence, keep, { pageSize: size, onProgress, onNote, onPage, startSkip: skip, filter, orderBy, db, stats, shouldStop });
+          return fetchAllRows(occurrence, keep, { pageSize: size, onProgress, onNote, onPage, startSkip: skip, filter, db, stats, shouldStop });
         }
         if (/timeout|504/i.test(msg) && size > 25) {
           size = Math.max(25, Math.floor(size / 4));

@@ -30,11 +30,11 @@ Break either and Mitos becomes a chatbot that guesses.
 
 | File | Owns |
 |---|---|
-| `server.js` | The Express app. Every route, the password gate, the sync job (`startSyncJob`, `jobEmit`, the SSE feed), the crash report, the scan and its field proposal (`buildScan`, `JUNK_FIELD`, `titleRank`), SaXML hints, the model lists (`curateModels`), the search log, auto-sync, boot. |
+| `server.js` | The Express app. Every route, the sign-in gate and sessions, the sync job (`startSyncJob`, `jobEmit`, the SSE feed), the crash report, the scan and its field proposal (`buildScan`, `JUNK_FIELD`, `titleRank`), SaXML hints, the model lists (`curateModels`), the search log, auto-sync, boot. |
 | `search.js` | `search()`: phase 1 (`runExact`), the balance rule (`balance`, `mergeGroups`), the fuzzy stage, phase 2 (`runAi`, `AI_BUDGET_MS`), the deterministic best-match rule (`deterministicBest`), the reasons (`explain`). |
 | `query.js` | `parseQuery()`: the type-detection front door. `describePlan()`: the plan in words. The name table (`nameGroups`). |
 | `store.js` | DuckDB. `sql()` and `vsql()` (one queue, one writer), `syncTables` and the streamed page pull with checkpoints, `INDEX_COLUMNS` and the typed columns, `textSearch` (one `case` per kind), `fuzzySearch`, `vectorSearch`, the vector file. |
-| `indexer.js` | `buildIndex()`: schema check, pull, `indexOneTable` (source text, typed values, hash diff, upsert), `runStages`, `refreshRecords` for the beacon. The `cMitosJSON` convention. |
+| `indexer.js` | `buildIndex()`: schema check, pull, `indexOneTable` (source text, typed values, hash diff, upsert), `runStages`, `refreshRecords` for `Mitos - Record Changed`. The `cMitosJSON` convention. |
 | `fm.js` | Every FileMaker call. Nothing else opens a connection. Read `GOTCHAS.md` before editing it. |
 | `ai.js` | `PROVIDERS`, `providerOf`, the keys, `chat()` (one door, three providers), `STAGE_DEFAULTS`, `STAGE_LIMITS`, `stages()`, `stageReady()`, `PRICES`. |
 | `embed.js` | `embedTexts()` and `embedQuery()`: three providers, batched, retried, unit vectors. |
@@ -61,7 +61,7 @@ Each names the goal, the seam, and the cost.
 
 ### Add a stage
 
-The five stages share one shape, and a sixth follows it.
+The five stages share one shape, and a sixth follows it. (Best match is a plain rule beside them, with its own `best` switch and no model; the AI half of it is `rerank`.)
 
 1. **Config.** Add a block to `STAGE_DEFAULTS` in `ai.js` with `on: false`,
    a `model: ""` if it needs one (a blank model resolves to the fast model

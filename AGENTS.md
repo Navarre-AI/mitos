@@ -8,7 +8,7 @@ tested, or changed. Read this first; it is written for you.
 A search sidecar for FileMaker. One search field, any table, the right
 record. Mitos copies the fields a person chooses into a local DuckDB index
 and answers with deterministic, type-aware search. Five optional AI stages
-sit on top, each with its own switch. FileMaker is the source of truth;
+sit on top, each with its own switch, plus a plain Best match rule. FileMaker is the source of truth;
 nothing a person reads as record data is generated (`RULES.md`).
 
 Node 24 or later (the image runs 26), ESM, one npm dependency (express). DuckDB runs as a CLI
@@ -52,26 +52,29 @@ irm https://navarre.ai/get/mitos.ps1 | iex
 
 `README.md` says the installer installs the Fly CLI if needed, asks for a
 name and a region, builds Mitos in Fly's cloud, and opens the browser with
-the site password. The installer script itself is not in this repo, so its
+the key. The installer script itself is not in this repo, so its
 flags are unverified here. What this repo does show:
 
 - `fly.template.toml` is the shape of the `fly.toml` it writes: the app
   name, the region, a `shared-cpu-1x` machine with 512 MB, a volume named
   `mitos_data` mounted at `/data`, `force_https`, and
   `auto_stop_machines = "suspend"` with `min_machines_running = 0`.
-- The site password is read from the `SITE_PASSWORD` environment variable
-  (`server.js`). With it set, every request needs `?key=<password>`, the
-  cookie that `?key=` drops, or HTTP Basic auth.
+- The site key is read from the `SITE_PASSWORD` environment variable
+  (`server.js`). With it set, a page asks for it at `/signin` and keeps a
+  session cookie (30 days, only a hash stored); five wrong keys pause
+  sign-in for a minute. `?key=<key>` on a page signs in and redirects
+  without it (a FileMaker web viewer). `/api/` routes also take `?key=` or
+  HTTP Basic auth. With no `SITE_PASSWORD` there is no gate.
 - `Dockerfile` builds from `node:26-slim` and installs the DuckDB CLI 1.5.6.
 
 Everything after the install happens in the browser: an eight-step wizard
-(Connect, Files, AI key, Scan, Tables, AI stages, Sync, Add to your file).
+(Connect, Files, API key, Scan, Tables, AI stages, Sync, Add to your file).
 The same steps live in Settings afterwards.
 
 Before connecting, the person's FileMaker Server needs OData on (Admin
 Console, Connectors) and an account whose privilege set has the `fmodata`
-extended privilege in each file to search. `README.md` also names the Data
-API and `fmrest`. Use a read-only account.
+extended privilege in each file to search. Mitos doesn't use the
+Data API. Use a read-only account.
 
 ## Run it locally (sample mode, no FileMaker, no key)
 
@@ -124,8 +127,8 @@ There is no unit test suite. `npm test` does not exist. The checks are:
 
 ## The API, one line each
 
-All routes sit behind the site password. `GET` routes work from a FileMaker
-web viewer or `Insert from URL` with `?key=<password>`.
+All routes sit behind the key (session cookie, `?key=`, or Basic auth). `GET` routes work from a FileMaker
+web viewer or `Insert from URL` with `?key=<key>`.
 
 | Route | What it does |
 |---|---|
@@ -139,7 +142,13 @@ web viewer or `Insert from URL` with `?key=<password>`.
 | `POST /api/index/cancel` | Stop the running job. A table is kept whole or not at all. |
 | `GET /api/index/status` | Counts, version, manifest, last crash. |
 | `POST /api/index/crash/ack` | Clear the crash report. |
-| `POST /api/records/changed` | Record-by-record refresh (not used in 1.0; records update on the timed sync): `{ tables: { "<raw>": { changed: [ids], deleted: [ids] } } }`. 202 while a sync runs. |
+| `POST /api/records/changed` | Record-by-record refresh, sent by the kit's "Mitos - Record Changed" script after a commit: `{ "table": "<raw>", "id": "<key>" }` or `{ tables: { "<raw>": { changed: [ids], deleted: [ids] } } }`. Answers 202 at once and queues the work; results in `GET /api/records/log`. |
+| `GET /api/records/log` | Newest first: what each record-by-record call did (updated, deleted, not found, errors). |
+| `GET /api/about` | This machine: region, memory, disk, version, build. |
+| `POST /api/reset` | Danger zone. `items`: any of index, copies, notes, config, keys, logs, sessions. |
+| `POST /api/tables/drop` | Danger zone. `{ table }`: delete that table's local copy and untick it. |
+| `POST /api/ai/semantic/off` | Delete the vectors (after the UI's warning). |
+| `GET /signin`, `POST /signin`, `GET /signout` | The sign-in page and its cookie. |
 | `GET /api/config` / `POST /api/config` | Read or save the connection, table choice, display names, table words, sync interval, date format, AI keys and stage switches. A new login is tested before it is saved. |
 | `POST /api/fm/test` | Test a connection without saving it. |
 | `GET /api/fm/tables` | The cached scan, or `{ building: true }`. `?refresh=1` rescans; `?rename=1` re-runs the naming pass. |
@@ -163,11 +172,11 @@ carries `why` (words) and `via` (exact, fuzzy, semantic).
 
 | File | Owns |
 |---|---|
-| `server.js` | The Express app: every route, the password gate, the sync job and its SSE feed, the crash report, the scan and the field proposal, SaXML hints, model lists, the search log, auto-sync, boot. |
+| `server.js` | The Express app: every route, the sign-in gate and sessions, the sync job and its SSE feed, the crash report, the scan and the field proposal, SaXML hints, model lists, the search log, auto-sync, boot. |
 | `search.js` | The two-phase search: the front door, the balance rule (no table floods the list), the fuzzy stage, the AI phase with its 6 s budget, the deterministic best-match rule. |
 | `query.js` | The type-detection front door: number, range, date, date range, month, email, phone, text. No model. |
 | `store.js` | DuckDB: the local copy of each table, the `mitos_index` table with typed columns, the streamed page pull with checkpoints, `textSearch`, `fuzzySearch`, `vectorSearch`, the vector file. |
-| `indexer.js` | The index pipeline: schema check, sync, per-record source text, hash diff, upsert, the beacon's per-record refresh, then the stages. |
+| `indexer.js` | The index pipeline: schema check, sync, per-record source text, hash diff, upsert, the per-record refresh for `Mitos - Record Changed`, then the stages. |
 | `fm.js` | All FileMaker I/O. OData discovery, `$metadata`, counts, adaptive paging, the quoted `$select` and its fallbacks. Read `GOTCHAS.md` first. |
 | `ai.js` | The one door for chat calls, the four providers and their keys, the stage defaults, limits and readiness, prices. |
 | `embed.js` | Text in, unit vectors out, for OpenAI, Google and Voyage. |
@@ -180,7 +189,7 @@ carries `why` (words) and `via` (exact, fuzzy, semantic).
 | `tables.config.js` | The table config for the sample data; a real install writes the same shape to `data/config.json`. |
 | `saxml.js` | Reader for a Save a Copy as XML export. Hints only. |
 | `env.js` | `.env` loader with override semantics. |
-| `public/index.html`, `public/app.js` | The whole UI: search, the card window (`?embed=1`), Settings (`?settings=1`), the wizard, the sync overlay. |
+| `public/index.html`, `public/app.js` | The whole UI: search, the card window (`?embed=1`), Settings (five tabs: Data Sources, Tables, AI, Log, Settings with the Danger zone), the wizard, the sync overlay. |
 | `filemaker/` | The FileMaker side: the kit file, the search and go-to-record scripts, `cMitosJSON.md`. |
 | `scripts/` | `eval.mjs`, `simulate.mjs`, `check-order.mjs`, `fetch-duckdb.mjs`. |
 | `eval/` | `cases.json`, its readable twin, and simulator reports. |

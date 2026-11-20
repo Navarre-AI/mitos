@@ -47,7 +47,7 @@ export async function rerank(query, reading, candidates) {
   });
   const user = `Search: ${query}\nRead as: ${reading || "words"}\n\nCandidates:\n${lines.join("\n")}`;
   try {
-    const raw = await chat({ model: s.model, system: SYSTEM, user, maxTokens: 200, timeoutMs: Number(s.timeoutMs) || 3000, json: true });
+    const raw = await chat({ model: s.model, system: SYSTEM, user, maxTokens: 600, timeoutMs: Number(s.timeoutMs) || 3000, json: true });
     const j = parseJson(raw);
     if (!j || !Array.isArray(j.order)) return { error: "no JSON in the answer", ms: Date.now() - t0 };
     const seen = new Set();

@@ -113,7 +113,7 @@ export async function understand(query, { tablesCfg = {}, labels = {}, dateForma
     .replace(/\{FIRSTJULY\}/g, d(7, 1)).replace(/\{MAY1\}/g, d(5, 1)).replace(/\{MAY15\}/g, d(5, 15))
     .replace("{DATEWORDS}", dateFormat === "dmy" ? "day/month/year" : "month/day/year");
   try {
-    const raw = await chat({ model: s.model, system, user: String(query), maxTokens: 300, timeoutMs: Number(s.timeoutMs) || 2500, json: true });
+    const raw = await chat({ model: s.model, system, user: String(query), maxTokens: 800, timeoutMs: Number(s.timeoutMs) || 2500, json: true });
     const j = parseJson(raw);
     if (!j || typeof j !== "object") return { error: "no JSON in the answer", ms: Date.now() - t0 };
     const out = {

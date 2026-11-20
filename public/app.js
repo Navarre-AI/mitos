@@ -13,12 +13,14 @@ async function apiJson(path, opts, tries = 3) {
   for (let i = 0; i < tries; i++) {
     try {
       const r = await fetch(path, opts);
+      // Any 401 means signed out: go to the sign-in page before reading the body.
+      if (r.status === 401) {
+        location.href = "/signin?next=" + encodeURIComponent(location.pathname + location.search);
+        throw Object.assign(new Error("Not signed in."), { noRetry: true });
+      }
       const txt = await r.text();
       try { return JSON.parse(txt); }
-      catch {
-        if (r.status === 401) throw Object.assign(new Error("Not signed in - reload with your ?key link."), { noRetry: true });
-        throw new Error("Mitos restarted or the connection dropped mid-request.");
-      }
+      catch { throw new Error("Mitos restarted or the connection dropped mid-request."); }
     } catch (e) {
       last = e;
       if (e.noRetry || i === tries - 1) break;
@@ -155,7 +157,12 @@ function render(data, opts = {}) {
     const fields = Object.entries(res.display);
     const row = el("div", "row" + (extra.best ? " best" : ""));
     const main = el("div", "main");
-    if (extra.best) { const b = el("div", "bestlbl"); b.textContent = "Best match"; main.appendChild(b); }
+    if (extra.best) {
+      const b = el("div", "bestlbl"); b.textContent = "Best match";
+      // Who picked it: the plain rule says nothing, the model says so.
+      if (data.best?.by === "rerank") { const by = el("span", "tagv"); by.textContent = "picked by AI"; b.appendChild(by); }
+      main.appendChild(b);
+    }
     const title = el("div", "title");
     title.textContent = String(fields[0]?.[1] ?? res.id);
     // A row from the fuzzy or semantic stage says so, in two words, so a
@@ -165,10 +172,8 @@ function render(data, opts = {}) {
     const sub = el("div", "sub");
     sub.textContent = fields.slice(1).map(([k, v]) => v).filter(Boolean).join(" · ");
     main.appendChild(title); main.appendChild(sub);
-    // The best match is a claim, so it carries its reason. Ordinary rows do not.
-    if (extra.best && data.best?.why) { const w = el("div", "why"); w.textContent = data.best.why; main.appendChild(w); }
-    // The reason for the match stays in the API (`why`) for the log and the
-    // eval; the row does not explain itself.
+    // No reason line under any row, the best match included: the reason stays
+    // in the API (`why`) and the search log; the row does not explain itself.
     row.appendChild(main);
     const pc = el("div", "pct"); pc.textContent = pctOf(res) + "%"; row.appendChild(pc);
     const rank = rankOf(g.table, res.id);
@@ -219,9 +224,12 @@ function showFirstRun(on) { $("firstRun").style.display = on ? "" : "none"; }
 $("firstRunSetup").addEventListener("click", () => openWizard(true));
 $("firstRunSample").addEventListener("click", () => runSync(null, { sample: true }));
 
+let flyApp = null; // FLY_APP_NAME, when Mitos runs on Fly (GET /api/index/status)
 async function refreshStatus() {
   try {
     const s = await apiJson("/api/index/status");
+    flyApp = s.flyApp || null;
+    $("dzDeleteRow").style.display = flyApp ? "" : "none";
     if (s.version) $("buildVer").textContent = "v" + s.version + (s.built ? " · " + s.built : "");
     const rows = s.stats.totalRows || 0;
     showFirstRun(!rows && !s.building);
@@ -262,27 +270,54 @@ function setSyncButtons(running) {
 // ---- Sync: confirm first, then a modal that watches a server-side job --------
 // The job lives on the server; this window only WATCHES it. Reloading the page
 // mid-sync re-attaches. Cancel asks the server to stop now.
-function confirmSync(tables) {
-  const inc = tables.slice().sort((a, b) => friendly(a).localeCompare(friendly(b)));
-  const drops = [...syncedSet].filter((n) => !inc.includes(n)).sort((a, b) => friendly(a).localeCompare(friendly(b)));
+// Before anything is saved: what will sync, what goes away with its local copy,
+// and which table re-reads because its fields changed. OK saves, then syncs;
+// Cancel leaves the form as it is and saves nothing.
+const byFriendly = (a, b) => friendly(a).localeCompare(friendly(b));
+const sameSet = (a, b) => { const x = new Set(a || []), y = new Set(b || []); return x.size === y.size && [...x].every((v) => y.has(v)); };
+// Tables whose searched or shown fields differ from what is saved: a field
+// change re-reads the whole table at the next sync. The count is the scan's.
+function fieldChanges(tables) {
+  const out = [];
+  for (const [raw, t] of Object.entries(tables || {})) {
+    const old = cfg?.tables?.[raw];
+    if (!old) continue;
+    if (sameSet(old.textFields, t.textFields) && sameSet(old.displayFields, t.displayFields)) continue;
+    const rows = (scannedTables?.tables || []).find((x) => x.name === raw)?.rowCount;
+    out.push({ raw, rows: rows == null ? null : Number(rows) });
+  }
+  return out.sort((a, b) => byFriendly(a.raw, b.raw));
+}
+const nameList = (arr) => arr.length < 3 ? arr.join(" and ") : arr.slice(0, -1).join(", ") + " and " + arr[arr.length - 1];
+function confirmSyncSave(tables) {
+  const inc = Object.keys(tables || {}).sort(byFriendly);
+  const before = new Set([...Object.keys(cfg?.tables || {}), ...syncedSet]);
+  const drops = [...before].filter((n) => !inc.includes(n)).sort(byFriendly);
+  const changes = fieldChanges(tables);
   // Two different tables can carry the same display name. When a label is
   // ambiguous, show the real key so the two are visibly different.
   const seen = {};
   for (const n of [...inc, ...drops]) (seen[friendly(n)] ||= new Set()).add(n);
   const label = (n) => seen[friendly(n)].size > 1 ? `${friendly(n)}  (${n})` : friendly(n);
   const li = (arr) => arr.map((n) => `<div style="padding:2px 0 2px 8px">&bull; ${esc(label(n))}</div>`).join("");
+  const syncWords = inc.length === 1 ? "this table" : `these ${inc.length} tables`;
+  const question = `Sync ${syncWords}` + (drops.length ? ` and remove ${drops.length > 3 ? drops.length + " tables" : nameList(drops.map(friendly))} from Mitos` : "") + "?";
+  $("syncConfirmOverlay").querySelector(".p-head strong").textContent = "Ready to sync";
   $("syncConfirmBody").innerHTML =
+    `<div style="font-weight:600;margin-bottom:8px">${esc(question)}</div>` +
     `<div><strong>${inc.length}</strong> table${inc.length === 1 ? "" : "s"} will sync from FileMaker:</div>${li(inc)}` +
     (drops.length
-      ? `<div style="margin-top:10px;color:var(--warn)"><strong>${drops.length}</strong> will be removed from the search index (your FileMaker data is untouched):</div>${li(drops)}`
-      : "");
+      ? `<div style="margin-top:10px;color:var(--warn)"><strong>${drops.length}</strong> will be removed from Mitos, local copy included (your FileMaker data is untouched):</div>${li(drops)}`
+      : "") +
+    changes.map((c) => `<div style="margin-top:10px;color:var(--warn)">Changing fields re-reads all ${c.rows == null ? "" : esc(c.rows.toLocaleString()) + " "}${esc(friendly(c.raw))} records.</div>`).join("");
   $("syncConfirmOverlay").classList.add("open");
-  // Sync, or Skip. Skip only closes: the picks are saved already.
-  $("syncConfirmCancel").textContent = "Skip";
-  $("syncConfirmGo").textContent = "Sync";
+  $("syncConfirmCancel").textContent = "Cancel";
+  $("syncConfirmGo").textContent = "OK";
   $("syncConfirmLater").style.display = "none";
-  $("syncConfirmCancel").onclick = () => $("syncConfirmOverlay").classList.remove("open");
-  $("syncConfirmGo").onclick = () => { $("syncConfirmOverlay").classList.remove("open"); runSync(inc); };
+  return new Promise((resolve) => {
+    $("syncConfirmCancel").onclick = () => { $("syncConfirmOverlay").classList.remove("open"); resolve(false); };
+    $("syncConfirmGo").onclick = () => { $("syncConfirmOverlay").classList.remove("open"); resolve(true); };
+  });
 }
 function setSub(t, rot) {
   const su = $("syncSub");
@@ -302,6 +337,7 @@ function paintNow(patch) {
   $("syncNowTable").textContent = nowState.table;
   $("syncNowStatus").textContent = nowState.status;
   $("syncNowProg").textContent = nowState.prog;
+  paintStrip();
 }
 function setNowLine(msg, cls) {
   const s = $("syncNowLine");
@@ -309,19 +345,56 @@ function setNowLine(msg, cls) {
   s.textContent = msg; s.title = msg;
 }
 
+// ---- The strip: a sync is the server's job and goes on when its window is
+// closed. A thin line across the top says how far it got, then that it
+// finished (or failed, in plain words), with a link to open the log.
+const syncStrip = { state: "idle", stopping: false, counts: () => ({ done: 0, total: 0 }), finTitle: "", finSub: "" };
+function paintStrip() {
+  const strip = $("syncStrip"); if (!strip) return;
+  const open = $("syncOverlay").classList.contains("open");
+  const st = syncStrip.state;
+  const show = st !== "idle" && !open && !document.body.classList.contains("embed");
+  strip.classList.toggle("on", show);
+  strip.classList.toggle("ok", st === "ok"); strip.classList.toggle("bad", st === "bad");
+  document.body.classList.toggle("has-strip", show);
+  if (!show) return;
+  let line;
+  if (st === "running") {
+    const { done, total } = syncStrip.counts();
+    line = syncStrip.stopping ? "Stopping the sync" : "Syncing" + (nowState.table ? " · " + nowState.table : "") + (nowState.status === "checking deletions" ? " · checking deletions" : "") + (nowState.prog ? " · " + nowState.prog : "") + (total ? " · " + done + " of " + total + " tables" : "");
+  } else line = syncStrip.finTitle + (syncStrip.finSub ? " · " + syncStrip.finSub : "");
+  $("syncStripText").textContent = line; strip.title = line;
+  $("syncStripLink").textContent = st === "running" ? "Watch" : wiz.finishing && st === "ok" ? "Finish setup" : "Open the log";
+  $("syncStripOk").style.display = st === "running" ? "none" : "";
+  $("syncStripFill").style.width = st === "running" ? $("syncOverall").style.width || "0%" : "0%";
+}
+function openSyncWindow(withLog) {
+  syncStrip.state = syncStrip.state === "running" ? "running" : "idle";
+  $("syncOverlay").classList.add("open");
+  if (withLog) setLogOpen(true);
+  paintStrip();
+}
+$("syncStrip").addEventListener("click", (e) => { if (e.target.id === "syncStripOk") return; openSyncWindow(syncStrip.state !== "running"); });
+$("syncStripOk").addEventListener("click", (e) => { e.stopPropagation(); syncStrip.state = "idle"; paintStrip(); });
+$("syncKeepWorking").addEventListener("click", () => { $("syncOverlay").classList.remove("open"); $("q").focus(); });
+new MutationObserver(paintStrip).observe($("syncOverlay"), { attributes: true, attributeFilter: ["class"] });
+
 // The modal opens FIRST; the stream connects once the job exists.
 async function runSync(tables, opts = {}) {
   const w = attachSync(tables, { deferConnect: true });
   w.log("Contacting the server...");
+  if (opts.dropped?.length) w.log("Removed the local copy of: " + opts.dropped.map(fname2).join(", "));
   try {
     // A Run from the AI tab is the paid phase alone: no pull, no index step.
-    const r = await postJson("/api/index/sync", { ...(opts.full ? { full: true } : {}), ...(opts.stagesOnly ? { stagesOnly: true } : {}) });
+    const r = await postJson("/api/index/sync", { ...(opts.full ? { full: true } : {}), ...(opts.stagesOnly ? { stagesOnly: true } : {}), ...(opts.rebuild ? { rebuild: true } : {}) });
     if (r.error) { w.log("Could not start the sync: " + r.error, "warn"); finishAvailable(); return; }
     if (r.already) w.log("A sync is already running; watching it.");
   } catch (e) { w.log("Could not start the sync: " + (e.message || e), "warn"); finishAvailable(); return; }
   w.connect(-1);
 }
 function finishAvailable() {
+  syncStrip.state = "idle"; paintStrip(); setSyncButtons(false);
+  $("syncBackgroundNote").style.display = "none"; $("syncSpin").style.display = "none";
   const cbtn = $("syncCancel"); cbtn.textContent = "Close"; cbtn.disabled = false; cbtn.onclick = () => $("syncOverlay").classList.remove("open");
 }
 let currentSync = null;
@@ -332,6 +405,8 @@ function attachSync(tables, opts = {}) {
   $("settings").classList.remove("open");
   $("syncOverlay").classList.add("open");
   setSyncButtons(true);
+  syncStrip.state = "running"; syncStrip.stopping = false;
+  $("syncBackgroundNote").style.display = "";
   $("syncTitle").style.display = "none";
   $("syncDone").style.display = "none";
   $("syncActions").style.display = "none";
@@ -400,6 +475,8 @@ function attachSync(tables, opts = {}) {
   let total = (tables || []).length, done = 0, sumChanged = 0, sumTotal = 0, failCount = 0, syncFinished = false;
   // A table finishes once: count NAMES, not events (replays hit twice).
   const doneNames = new Set();
+  const dupTables = new Set(); // tables FileMaker still holds repeated IDs for
+  syncStrip.counts = () => ({ done, total });
   const markDone = (n) => { if (doneNames.has(n)) return false; doneNames.add(n); done = doneNames.size; return true; };
   let lastSeq = -1;
   // Finished rows fold into one line at the top; active and waiting stay below.
@@ -423,6 +500,9 @@ function attachSync(tables, opts = {}) {
     $("syncTables").appendChild(r);
     return (rows[name] = { el: r, nm: r.querySelector(".nm"), bar: r.querySelector(".track > div"), st: r.querySelector(".st"), expected: null });
   };
+  // The list shows at once, from the set the caller was given (the saved
+  // tables); the server's start event then fills in counts and names.
+  for (const t of tables || []) rowFor(t);
   $("syncLog").innerHTML = "";
   const logLine = (msg, cls) => {
     const L = $("syncLog");
@@ -494,6 +574,7 @@ function attachSync(tables, opts = {}) {
       if (phase) frac = stageFrac();
     }
     $("syncOverall").style.width = Math.min(99, Math.round(frac * 100)) + "%";
+    paintStrip();
   };
   // The one end line, from the server's summary when it sends one.
   const summaryLine = (s) => {
@@ -537,6 +618,7 @@ function attachSync(tables, opts = {}) {
       }
       case "phase":
         if (ev.phase === "schema") { logLine("Reading the FileMaker schema over OData..."); setSub("Reading the FileMaker schema"); }
+        else if (ev.phase === "rebuild") { logLine("Rebuilding the search index from the local copies. Nothing is read from FileMaker."); setSub("Rebuilding the search index"); }
         break;
       // The optional stages after the index: search notes and vectors. They
       // report on the now-line and in the log; the table rows are done.
@@ -557,6 +639,15 @@ function attachSync(tables, opts = {}) {
       case "pull-resumed": { const r = rowFor(ev.name, lbl); r.st.textContent = "resuming"; logLine(fname2(ev.name) + ": continuing from row " + num(ev.fromRow) + " after the restart"); break; }
       case "pull-rows": {
         const r = rowFor(ev.name, lbl);
+        // The deletion check reads the keys again: it says how far it is on
+        // the line, and never draws the table's bar going backwards.
+        if (ev.phase === "deletions") {
+          const txt = ev.text || "checking which records were deleted: " + num(ev.rows) + (ev.of ? " of " + num(ev.of) : "");
+          r.st.textContent = "checking deletions";
+          paintNow({ table: friendly(ev.name), status: "checking deletions", prog: num(ev.rows) + (ev.of ? " / " + num(ev.of) : "") });
+          setNowLine(fname2(ev.name) + ": " + txt);
+          break;
+        }
         r.pullRows = Number(ev.rows) || 0;
         r.st.textContent = num(ev.rows) + (r.expected ? " / " + num(r.expected) : "");
         paintNow({ table: friendly(ev.name), status: "reading", prog: r.st.textContent });
@@ -567,6 +658,7 @@ function attachSync(tables, opts = {}) {
       }
       case "pull-done": {
         const r = rowFor(ev.name, lbl); r.bar.classList.remove("pulse"); r.pullDone = true;
+        if (Number(ev.duplicatesTotal) > 0 || (ev.duplicates || []).length) dupTables.add(ev.name);
         // The server says how it read the table (method), from when (since,
         // incremental only) and whether it resumed after a crash (resumedFrom).
         // Without a method (an older server) the plain line stands.
@@ -589,7 +681,16 @@ function attachSync(tables, opts = {}) {
         overall();
         break;
       }
-      case "note": logLine((ev.name ? fname2(ev.name) + ": " : "") + ev.note); break;
+      case "note": {
+        // A note may already open with the table's name (the repeated-ID one
+        // does); the name is not said twice.
+        const note = String(ev.note || "");
+        const named = ev.name && (note.startsWith(friendly(ev.name) + ":") || note.startsWith(ev.name + ":") || (lbl && note.startsWith(lbl + ":")));
+        const dup = /share ID|repeated IDs?/.test(note);
+        if (dup && ev.name) dupTables.add(ev.name);
+        logLine((ev.name && !named ? fname2(ev.name) + ": " : "") + note, /share ID/.test(note) ? "warn" : "");
+        break;
+      }
       case "index-pruned": for (const n of ev.tables || []) { const r = rowFor(n); r.el.classList.add("dropped"); r.st.textContent = "removed"; } logLine("Removed from the index (no longer selected): " + (ev.tables || []).map(fname2).join(", ")); break;
       // A table that pulled nothing new is finished already; its row stays done.
       case "index-table-start": { const r = rowFor(ev.table, lbl); if (r.unchanged) break; r.st.textContent = "indexing"; paintNow({ table: friendly(ev.table), status: "indexing", prog: num(ev.rows) + " records" }); if (ev.source && ev.source !== "fields") logLine(fname2(ev.table) + ": reading " + ev.source); break; }
@@ -617,18 +718,23 @@ function attachSync(tables, opts = {}) {
         overall();
         break;
       }
-      case "cancelling": logLine("Cancel requested, stopping now.", "warn"); subLocked = true; setSub("Stopping"); $("syncCancel").disabled = true; $("syncCancel").textContent = "Stopping..."; break;
+      case "cancelling": syncStrip.stopping = true; paintStrip(); logLine("Cancel requested, stopping now.", "warn"); subLocked = true; setSub("Stopping"); $("syncCancel").disabled = true; $("syncCancel").textContent = "Stopping..."; break;
       case "pull-cancelled": { const r = rowFor(ev.name, lbl); r.el.classList.add("err"); r.st.textContent = "stopped, nothing kept"; r.bar.classList.remove("pulse"); r.bar.style.width = "0%"; break; }
       case "cancelled": logLine("Stopped at " + friendly(ev.at) + ". Finished tables were kept.", "warn"); break;
       case "stopped": finish("Sync stopped", `${done} of ${total} tables finished; the rest are unchanged.`, false); logLine("Sync stopped.", "warn"); break;
       // done carries the server's summary; finished closes the job. The end
       // line comes from the summary when there is one.
-      case "done": if (ev.summary && typeof ev.summary === "object") endLine = summaryLine(ev.summary); break;
+      case "done":
+        if (ev.summary && typeof ev.summary === "object") endLine = summaryLine(ev.summary);
+        // A run that had nothing to build says so.
+        if (ev.upToDate || ev.summary?.upToDate) endLine = "Already up to date";
+        break;
       case "finished": {
         $("syncOverall").style.width = "100%";
         let summary = endLine;
         if (!summary && stagesOnly) summary = stageSum.total ? num(stageSum.done) + " of " + num(stageSum.total) + " records done" : "nothing to do";
         if (!summary) { const unchanged = Math.max(0, sumTotal - sumChanged); summary = num(sumChanged) + " record" + (sumChanged === 1 ? "" : "s") + " indexed · " + num(unchanged) + " unchanged"; }
+        if (dupTables.size) summary += " · " + dupTables.size + " table" + (dupTables.size === 1 ? " has" : "s have") + " IDs that repeat in FileMaker (see the log)";
         finish(stagesOnly ? "Run complete" : "Sync complete", summary, false);
         logLine((stagesOnly ? "Run complete · " : "Sync complete · ") + summary, "ok");
         break;
@@ -648,6 +754,14 @@ function attachSync(tables, opts = {}) {
     paintNow({ table: title, status: "", prog: total ? `${done} / ${total} tables` : "" });
     setNowLine(sub || title, showActions ? "warn" : "ok");
     $("syncCancel").style.display = "none";
+    $("syncBackgroundNote").style.display = "none";
+    // Finished with the window closed: the strip says so, in plain words,
+    // until OK. A person who was watching sees the window instead.
+    syncStrip.stopping = false;
+    syncStrip.finTitle = showActions ? (title === "Sync problem" ? "Sync failed" : title) : title.replace(/ complete$/, " finished");
+    syncStrip.finSub = sub || "";
+    syncStrip.state = $("syncOverlay").classList.contains("open") ? "idle" : (showActions ? "bad" : "ok");
+    paintStrip();
     const go = $("syncDone");
     go.style.display = "";
     // Inside the wizard the sync is step 7 of 8: the last step, adding the
@@ -666,7 +780,7 @@ function attachSync(tables, opts = {}) {
   async function onError() {
     es.close();
     if (syncFinished) return;
-    if (reconnects++ >= 20) { finish("Lost contact with Mitos", "The app did not come back. Reload the page, then try again.", true); return; }
+    if (reconnects++ >= 20) { finish("Lost contact with Mitos", "Mitos did not come back. Close and open Mitos again, then try again.", true); return; }
     // The job runs server-side and buffers its events: a reconnect replays
     // what was missed. If the job is gone, the server restarted.
     await new Promise((r) => setTimeout(r, 1500));
@@ -747,16 +861,18 @@ const ago = (iso) => {
 
 // Four tabs. Landing is decided per state on a fresh open; reopens keep the tab.
 let activeTab = null;
+const TABS = ["fm", "tables", "ai", "log", "settings"];
 function showTab(t) {
-  for (const k of ["fm", "tables", "ai", "log"]) {
+  for (const k of TABS) {
     $("tab-" + k).style.display = k === t ? "" : "none";
     $("tabbtn-" + k).classList.toggle("on", k === t);
   }
   activeTab = t;
   // Data Sources saves itself (Connect persists, file picks persist), so its
   // bar only closes; Tables and AI have a Save.
-  $("saveAll").style.display = t === "fm" || t === "log" ? "none" : "";
-  if (t === "log") loadSearchLog();
+  $("saveAll").style.display = t === "fm" || t === "log" || t === "settings" ? "none" : "";
+  if (t === "log") { loadSearchLog(); loadRecordLog(); }
+  if (t === "settings") loadAbout();
   // The Tables tab paints its list whenever it is shown and the list is
   // empty (the wizard filled scannedTables without painting) or stale (a
   // newer scan on the server than the one in hand).
@@ -767,18 +883,30 @@ function showTab(t) {
     else if (!painted) renderScanned();
   }
 }
-for (const k of ["fm", "tables", "ai", "log"]) $("tabbtn-" + k).onclick = () => showTab(k);
+for (const k of TABS) $("tabbtn-" + k).onclick = () => showTab(k);
 $("goDataSources").onclick = () => showTab("fm");
+
+// A table's semantic switch: its saved choice, else what the server proposes, else on.
+// A table that is not in the saved set (not indexed) is never semantic-on.
+const semOn = (raw) => (cfg?.tables && !(raw in cfg.tables)) ? false : (cfg?.tables?.[raw]?.semantic ?? (cfg?.ai?.coverage?.tables || []).find((t) => t.src_table === raw)?.semantic ?? true);
 
 async function openSettings(tab) {
   const wasOpen = $("settings").classList.contains("open");
   $("settings").classList.add("open");
   $("saveNote").textContent = "";
+  const tabBefore = activeTab;
   await loadConfig();
   const fresh = !cfg?.fmConfigured || !cfg?.scan;
-  showTab(tab || (wasOpen && activeTab ? activeTab : fresh ? "fm" : "tables"));
+  // A tab picked while the config loaded wins.
+  if (activeTab === tabBefore) showTab(tab || (wasOpen && activeTab ? activeTab : fresh ? "fm" : "tables"));
   checkCrash().catch(() => {});
+  // Record updates with a problem show as a count on the Log tab, whatever tab is open.
+  loadRecordLog();
+  loadAbout();
+  clearInterval(recTimer);
+  recTimer = setInterval(() => { if ($("settings").classList.contains("open")) loadRecordLog(); else clearInterval(recTimer); }, 30000);
 }
+let recTimer = null;
 // ---- Crash report: a sync that took Mitos down leaves a note on the server.
 // Shown once per note, when the page or Settings opens. Both buttons clear it.
 let crashSeen = null;
@@ -795,13 +923,19 @@ async function checkCrash(st) {
   $("crashRetry").onclick = async () => { $("crashOverlay").classList.remove("open"); await ack(); runSync(null); };
 }
 $("openSettings").addEventListener("click", () => openSettings());
-$("closeSettings").addEventListener("click", () => { $("settings").classList.remove("open"); });
+$("closeSettings").addEventListener("click", () => { $("settings").classList.remove("open"); clearInterval(recTimer); });
 // Escape backs out one level: the providers screen, a help window, an
 // enrichment window, then Settings itself.
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
-  for (const id of ["helpOverlay", "provOverlay", "enrichOverlay", "syncConfirmOverlay", "crashOverlay"]) {
-    const o = $(id); if (o && o.classList.contains("open")) { o.classList.remove("open"); e.preventDefault(); return; }
+  for (const id of ["askOverlay", "destroyOverlay", "helpOverlay", "dropOverlay", "resetOverlay", "provOverlay", "enrichOverlay", "syncConfirmOverlay", "crashOverlay"]) {
+    const o = $(id); if (!o || !o.classList.contains("open")) continue;
+    e.preventDefault();
+    // A question that waits for an answer gets "no", so nothing stays pending.
+    if (id === "askOverlay") $("askNo").click();
+    else if (id === "syncConfirmOverlay") $("syncConfirmCancel").click();
+    else o.classList.remove("open");
+    return;
   }
   if ($("settings").classList.contains("open") && !document.querySelector(".overlay.open:not(#settings)")) {
     // An open table row on the Tables tab folds first; Settings closes on
@@ -873,9 +1007,7 @@ async function loadConfig() {
     }
     scannedAtKnown = cfg.scan?.scannedAt || null;
     renderSaxHints(cfg.hints);
-    // This-server card
-    $("srvIndex").textContent = fmtNum(cfg.index.totalRows) + " records across " + cfg.index.tables.length + " tables";
-    $("srvBuilt").textContent = cfg.index.builtAt ? ago(cfg.index.builtAt) + (cfg.index.building ? " (building now)" : "") : "never";
+    paintSemCells();
     $("syncEvery").value = String(cfg.syncEvery || 0);
     $("dateFormat").value = cfg.dateFormat === "dmy" ? "dmy" : "mdy";
     $("lastSync").textContent = cfg.index.builtAt ? "last synced " + ago(cfg.index.builtAt) : "";
@@ -883,10 +1015,7 @@ async function loadConfig() {
     // AI tab: the switch scopes the card; it opens on the naming model's provider.
     renderProviders();
     await fillModels();
-    // One dim line at the foot of the AI tab: which Mitos this is. Nothing
-    // when the server does not say.
-    const ver = typeof cfg.version === "string" ? { version: cfg.version } : (cfg.version || null);
-    $("aiVersion").textContent = ver && ver.version ? "Mitos " + ver.version + (ver.built ? " · built " + ver.built : "") : "";
+    applyGate();
   } catch (e) { $("saveNote").textContent = e.message; }
 }
 
@@ -1194,7 +1323,7 @@ function renderSaxHints(h) {
       `</div></div>` +
       `<button class="rm" title="Remove this upload" type="button">&#10005;</button>`;
     row.querySelector(".rm").onclick = async () => {
-      if (!confirm(`Remove "${name}"? Mitos falls back to auto-detected names for its tables at the next rescan.`)) return;
+      if (!await askOnce("Remove this upload?", `Mitos falls back to auto-detected names for its tables at the next rescan.\n\n${name}`, "Remove", "Cancel")) return;
       let last = null;
       for (const f of fs) { try { last = await fetch("/api/schema/hints/" + encodeURIComponent(f.file), { method: "DELETE" }).then((x) => x.json()); } catch {} }
       renderSaxHints(last ? last.hints : null);
@@ -1256,7 +1385,7 @@ $("saxFile").onchange = async () => {
   $("saxFile").value = "";
 };
 $("saxClearBtn").onclick = async () => {
-  if (!confirm("Remove every uploaded XML? Mitos falls back to auto-detected names at the next rescan.")) return;
+  if (!await askOnce("Remove every uploaded XML?", "Mitos falls back to auto-detected names at the next rescan.", "Remove all", "Cancel")) return;
   await fetch("/api/schema/hints", { method: "DELETE" }).catch(() => {});
   $("saxProgress").innerHTML = ""; renderSaxHints(null);
   $("saxStatus").textContent = "Cleared. Rescan to fall back to auto-detected names.";
@@ -1320,6 +1449,26 @@ function slugProblem(raw, word) {
   if (taken[word]) return `"${word}" is already used by ${fname2(taken[word])}. Each table needs its own word.`;
   return "";
 }
+// ---- Per-table semantic search: the vectors each table holds, from the config's coverage.
+const semanticStageOn = () => Boolean(cfg?.ai?.stages?.semantic?.on);
+function semVectorsOf(raw) {
+  const c = (cfg?.ai?.coverage?.tables || []).find((x) => x.src_table === raw);
+  return { n: Number(c?.vectors ?? c?.embedded ?? 0), bytes: Number(c?.vectorBytes || 0), rows: Number(c?.rows || 0) };
+}
+function paintSemCells() {
+  const list = $("tblList");
+  list.classList.toggle("sem-on", semanticStageOn());
+  for (const cell of list.querySelectorAll(".trow .tsem")) {
+    const sw = cell.querySelector(".tsem-sw"), v = semVectorsOf(cell.dataset.raw);
+    const included = cell.closest(".trow")?.querySelector("input[type=checkbox]")?.checked;
+    // Only a table that is kept (indexed) has a semantic switch; the cell stays, empty, for alignment.
+    cell.style.visibility = included ? "" : "hidden";
+    const nEl = cell.querySelector(".tsem-n");
+    nEl.textContent = !included ? "" : !sw.checked ? "off" : v.n ? v.n.toLocaleString() + (v.bytes ? " · " + fmtBytes(v.bytes) : "") : "none yet";
+    // Apples to apples: vectors are counted against what Mitos holds, while the Records column is FileMaker's count from the last scan.
+    nEl.title = included && v.rows ? `${v.n.toLocaleString()} vectors for ${v.rows.toLocaleString()} records in Mitos. The Records column is FileMaker's count at the last sync.` : "";
+  }
+}
 function renderTables(tables) {
   const indexed = new Set((cfg?.index?.tables || []).map((t) => t.src_table));
   const list = $("tblList");
@@ -1332,7 +1481,8 @@ function renderTables(tables) {
   tables = tables.slice().sort((a, b) => (Number(inc(b)) - Number(inc(a))) || byDisplayName(a, b));
   if (!tables.length) return;
   const th = el("div", "thead");
-  th.innerHTML = `<span class="cb"></span><span class="fill"></span><span class="tnum">Records</span><span class="tnum f">Fields</span><span class="tdotw"></span>`;
+  th.innerHTML = `<span class="cb"></span><span class="fill"></span><span class="tnum">Records</span><span class="tnum f">Fields</span><span class="tsem">Semantic</span><span class="tdotw"></span>`;
+  list.classList.toggle("sem-on", semanticStageOn());
   list.appendChild(th);
   let sepDone = false;
   openRow = null;
@@ -1354,8 +1504,22 @@ function renderTables(tables) {
       `<span class="tlabel" title="${esc(fname)}${fname !== t.name ? " (" + esc(t.name) + ")" : ""}"><span class="fn">${esc(fname)}</span><span class="rn">${fname !== t.name ? esc(t.name) : ""}</span></span>` +
       `<span class="tnum">${t.rowCount == null ? "&ndash;" : Number(t.rowCount).toLocaleString()}</span>` +
       `<span class="tnum f">${t.fieldCount ?? ""}</span>` +
+      `<span class="tsem" data-raw="${esc(t.name)}"><input type="checkbox" class="sw tsem-sw" title="Semantic search for this table"${semOn(t.name) === false ? "" : " checked"}><span class="tsem-n"></span></span>` +
       `<span class="tdotw"><span class="tdot ${dot[0]}" title="${esc(dot[1])}"></span></span>`;
     row.querySelector("input").addEventListener("click", (e) => e.stopPropagation());
+    row.querySelector("input").addEventListener("change", paintSemCells);
+    // The per-table semantic switch. Off with vectors in place asks first: the
+    // vectors for this table are deleted when Save is pressed.
+    const tsw = row.querySelector(".tsem-sw");
+    row.querySelector(".tsem").addEventListener("click", (e) => e.stopPropagation());
+    tsw.addEventListener("change", async () => {
+      tsw.dataset.touched = "1";
+      paintSemCells();
+      if (tsw.checked) return;
+      const n = semVectorsOf(t.name).n;
+      if (!n) return;
+      if (!await askOnce("Turn off semantic search for " + fname + "?", `Deletes ${n.toLocaleString()} vector${n === 1 ? "" : "s"} for ${fname}. They go when you save, and turning it back on rebuilds them.`, "Turn off", "Cancel")) { tsw.checked = true; paintSemCells(); }
+    });
     // A tick makes a table's word count; every word is checked again.
     row.querySelector("input").addEventListener("change", () => { for (const r of list.querySelectorAll(".trow")) r._exp?._checkSlug?.(); });
     // Disclosure row: click expands the table's own settings in place. One
@@ -1426,6 +1590,7 @@ function renderTables(tables) {
   // Every word checked once the whole list is in place, so a saved
   // duplicate shows before anyone types.
   for (const row of list.querySelectorAll(".trow")) row._exp._checkSlug();
+  paintSemCells();
 }
 
 // Search notes (the enrichment stage) per table: a switch and the prompt a
@@ -1487,28 +1652,32 @@ function collectTables() {
       displayFields: [...(title ? [title] : []), ...shown],
       enrich: { on: Boolean(box.querySelector(".en-on")?.checked), prompt: box.querySelector(".en-prompt")?.value.trim() || "" },
     };
+    // The semantic switch goes along once it is saved or touched; an untouched
+    // new table keeps the server's own default.
+    const tsw = row.querySelector(".tsem-sw");
+    if (tsw && (tsw.dataset.touched || cfg?.tables?.[row.dataset.table]?.semantic !== undefined)) tables[row.dataset.table].semantic = tsw.checked;
   }
   return tables;
 }
 
-async function saveAll() {
+// Saves the form. The table picks go only when asked (the Tables tab): an
+// AI-tab Save must never change which tables are kept. Returns the server's
+// answer; `tables` in it is the saved set.
+async function saveAll(opts = {}) {
   const body = { syncEvery: Number($("syncEvery").value), dateFormat: $("dateFormat").value };
-  const tables = collectTables();
-  if (tables && Object.keys(tables).length) body.tables = tables;
+  if (opts.tables) { const tables = opts.tablesObj || collectTables(); if (tables && Object.keys(tables).length) body.tables = tables; }
   body.ai = collectAi();
   const r = await postJson("/api/config", body);
   if (r.error) throw new Error(r.error);
-
-  return tables;
+  return r;
 }
 
 
-// Save on the Tables tab is Pythia's Apply: the picks are saved, then the
-// confirm dialog says what will sync and what will be removed, and the sync
-// starts from there. Saving a table choice and walking away is not a state
-// anyone wants (Matt, 2026-09-07). On the AI tab, Save saves and closes.
-// A wrong table word blocks Save and opens the row that carries it. The
-// server's own refusal (400) lands under the same field.
+// Save on the Tables tab: Pythia's Apply. The confirm says what will sync, what
+// goes, and what re-reads; OK saves and syncs, Cancel saves nothing. On the AI
+// tab, Save saves and closes. A wrong table word blocks Save and opens the row
+// that carries it. The server's own refusal (400, or 409 while a sync runs)
+// lands under the same field, or in the note.
 function slugsBlockSave() {
   const rows = [...$("tblList").querySelectorAll(".trow")];
   for (const row of rows) row._exp?._checkSlug?.();
@@ -1534,38 +1703,46 @@ function showSlugRefusal(msg) {
   }
   return false;
 }
-$("saveAll").addEventListener("click", async () => {
-  if (activeTab === "tables" && slugsBlockSave()) return;
-  $("saveNote").textContent = "saving...";
+async function saveTablesAndSync(verb) {
+  if (slugsBlockSave()) return;
+  $("saveNote").textContent = "";
   try {
-    const tables = await saveAll();
+    // The sample data has no FileMaker behind it: save and load it.
+    if (!cfg?.fmConfigured) {
+      $("saveNote").textContent = "saving...";
+      await saveAll({ tables: true });
+      await loadConfig(); $("saveNote").textContent = ""; refreshStatus();
+      runSync(null, { sample: true });
+      return;
+    }
+    // A form that was never painted has no picks to send: the saved ones stand.
+    const tables = collectTables();
+    const chosen = tables ? tables : Object.fromEntries(Object.entries(cfg?.tables || {}).map(([k, v]) => [k, v]));
+    if (!Object.keys(chosen).length) { $("saveNote").textContent = `Pick at least one table, then ${verb}.`; return; }
+    if (!await confirmSyncSave(chosen)) return;
+    $("saveNote").textContent = "saving...";
+    const r = await saveAll({ tables: true, tablesObj: tables && Object.keys(tables).length ? tables : null });
     await loadConfig();
     $("saveNote").textContent = "";
     refreshStatus();
-    if (activeTab === "tables") {
-      const chosen = tables && Object.keys(tables).length ? Object.keys(tables) : Object.keys(cfg.tables || {});
-      if (!cfg.fmConfigured) { runSync(null, { sample: true }); return; }
-      if (!chosen.length) { $("saveNote").textContent = "Pick at least one table, then Save."; return; }
-      confirmSync(chosen);
-      return;
-    }
-    $("settings").classList.remove("open");
+    // The sync plan is the SAVED set, as the server answered, not the form.
+    const saved = r.tables && Object.keys(r.tables).length ? Object.keys(r.tables) : Object.keys(chosen);
+    runSync(saved, { dropped: r.dropped || [] });
   } catch (e) { $("saveNote").textContent = e.message; showSlugRefusal(e.message); }
-});
-// Sync now: save the picks, then say what is about to happen before it happens.
-$("syncBtn").addEventListener("click", async () => {
-  if (slugsBlockSave()) return;
+}
+$("saveAll").addEventListener("click", async () => {
+  if (activeTab === "tables") return saveTablesAndSync("Save");
   $("saveNote").textContent = "saving...";
   try {
-    const tables = await saveAll();
+    await saveAll();
     await loadConfig();
     $("saveNote").textContent = "";
-    const chosen = tables && Object.keys(tables).length ? Object.keys(tables) : Object.keys(cfg.tables || {});
-    if (!chosen.length && !cfg.fmConfigured) { runSync(null, { sample: true }); return; }
-    if (!chosen.length) { $("saveNote").textContent = "Pick at least one table, then Sync."; return; }
-    confirmSync(chosen);
-  } catch (e) { $("saveNote").textContent = e.message; showSlugRefusal(e.message); }
+    refreshStatus();
+    $("settings").classList.remove("open");
+  } catch (e) { $("saveNote").textContent = e.message; }
 });
+// Sync now: the same flow as Save on the Tables tab.
+$("syncBtn").addEventListener("click", () => saveTablesAndSync("Sync"));
 
 // ===== The setup wizard (Pythia's, 2026-09-05) ========================================
 // Seven steps, one screen each; the screen under the lit step is that step's
@@ -1577,7 +1754,7 @@ $("syncBtn").addEventListener("click", async () => {
 const WIZ_LABELS = ["Connect", "Files", "API key", "Scan", "Tables", "AI stages", "Sync", "Add to your file"];
 const WIZ_STEPS = WIZ_LABELS.length;
 const wiz = { open: false, step: 1, prov: "anthropic", connOk: false, filesOk: false, keyOk: false, keySkipped: false, scanOk: false,
-              stagesSeen: false, tables: [], picked: new Set(), busy: false, waitingScan: false, finishing: false };
+              stagesSeen: false, tables: [], picked: new Set(), saved: [], busy: false, waitingScan: false, finishing: false };
 const wizLine = (id, msg, on) => { const e = $(id); e.textContent = msg || ""; e.classList.toggle("on", Boolean(on !== undefined ? on : msg)); };
 function wizPaint() {
   const done = [wiz.connOk, wiz.filesOk, wiz.keyOk || wiz.keySkipped, wiz.scanOk, wiz.picked.size > 0, wiz.stagesSeen, wiz.step === 8, false];
@@ -1680,19 +1857,20 @@ function wizPaintProvider() {
   wiz.keyOk = false; wizLine("wizKeyOk", ""); wizLine("wizKeyErr", "");
   wizPaint();
 }
-// The same live list the AI tab shows (GET /api/ai/models), this provider's
-// chat models only: an embedding model cannot name a table. Before a key is
-// checked the server's list may be short or empty; Other... is always there.
+// The same list the AI tab shows (GET /api/ai/models), this provider's chat
+// models only: an embedding model cannot name a table. Other... is always there.
 function wizFillModels(keep) {
   const sel = $("wizModel");
   const cur = keep ? pickedModel(sel) : "";
   sel.innerHTML = "";
-  const models = (modelList?.models || []).filter((m) => m.provider === wiz.prov && m.kind === "chat");
-  for (const m of models) { const o = document.createElement("option"); o.value = m.id; o.textContent = m.name || m.id; sel.appendChild(o); }
+  // Not filtered by "usable": the key for this provider is what is being entered.
+  const models = (modelList?.models || []).filter((m) => m.provider === wiz.prov && isChatModel(m));
+  addJobOptions(sel, models, "naming");
+  $("wizModelHint").textContent = recHint("naming");
   // A pick after the key already passed saves the way the key check does.
   modelPicker(sel, (id) => { if (wiz.keyOk && id) postJson("/api/config", { ai: { namingModel: id } }).catch(() => {}); });
   if (cur) setPicked(sel, cur);
-  else if (models.length) sel.value = models[0].id;
+  else if (models.length) sel.value = recommendedPick(models, "naming");
 }
 let wizKeyTimer = null;
 async function wizTestKey(manual) {
@@ -1773,16 +1951,40 @@ function wizPickSum() {
   const recs = rows.reduce((a, t) => a + (Number(t.rowCount) || 0), 0);
   $("wizPickSum").textContent = `${rows.length} table${rows.length === 1 ? "" : "s"} · ${recs.toLocaleString()} records selected`;
 }
+// Saves the picks and answers with the SAVED set (the server's word, not the
+// local list). An error stays on the screen and the wizard does not move on.
+// A save that would remove tables asks first, as Save on the Tables tab does.
+// The same list is asked once (the sync step saves the picks again).
+async function wizConfirmDrops() {
+  const before = new Set([...Object.keys(cfg?.tables || {}), ...syncedSet]);
+  const drops = [...before].filter((n) => !wiz.picked.has(n)).sort(byFriendly);
+  const key = drops.join("\u0000");
+  if (!drops.length || wiz.askedDrops === key) return true;
+  const names = drops.length > 3 ? drops.length + " tables" : nameList(drops.map(friendly));
+  const ok = await askOnce("Remove " + (drops.length === 1 ? "this table?" : "these tables?"), `Saving this choice removes ${names} from Mitos, local copy included. Your FileMaker data is untouched.`, "Remove", "Cancel");
+  if (ok) wiz.askedDrops = key;
+  return ok;
+}
+async function wizSaveTables(errId) {
+  if (!await wizConfirmDrops()) throw new Error("Nothing was saved. Tick the tables to keep, or choose Remove.");
+  const tables = {};
+  for (const t of wiz.tables) if (wiz.picked.has(t.name)) tables[t.name] = { ...t.proposal, ...(t.displayName && t.displayName !== t.name ? { displayName: t.displayName } : {}) };
+  const r = await postJson("/api/config", { tables });
+  if (r.error) throw new Error(r.error);
+  const saved = r.tables ? Object.keys(r.tables) : [];
+  if (!saved.length) throw new Error("Mitos saved no tables. Go back and pick at least one.");
+  wiz.saved = saved;
+  return r;
+}
 async function wizSavePicks() {
+  wizLine("wizPickErr", "");
   wizBusy(true, "Saving...");
   try {
     // Each picked table saves with its proposed fields; Settings can adjust them.
-    const tables = {};
-    for (const t of wiz.tables) if (wiz.picked.has(t.name)) tables[t.name] = { ...t.proposal, ...(t.displayName && t.displayName !== t.name ? { displayName: t.displayName } : {}) };
-    await postJson("/api/config", { tables });
+    await wizSaveTables();
     await loadConfig();
     wizBusy(false); wizGo(6);
-  } catch (e) { wizBusy(false); alert("Could not save the table choice: " + (e.message || e)); }
+  } catch (e) { wizBusy(false); wizLine("wizPickErr", "Could not save the table choice: " + String(e.message || e).slice(0, 300)); }
 }
 
 // step 6: the AI stages, the same switches the AI tab shows, rendered into
@@ -1800,11 +2002,19 @@ function wizFillPlan() {
     `<div>Roughly <b>${time}</b> on a normal connection.</div>` +
     `<div style="margin-top:6px">You can watch every table as it lands, and cancel at any point.</div>`;
 }
-function wizStartSync() {
+// The first sync reads exactly the tables the server saved: the picks are
+// saved once more here, the answer is awaited, and its set is the plan.
+async function wizStartSync() {
   if (!wiz.picked.size) return;
+  wizLine("wizPlanErr", "");
+  wizBusy(true, "Saving...");
+  let r;
+  try { r = await wizSaveTables(); }
+  catch (e) { wizBusy(false); wizLine("wizPlanErr", "The table choice was not saved, so nothing was synced: " + String(e.message || e).slice(0, 300)); return; }
+  wizBusy(false);
   wiz.finishing = true;
   $("wizOverlay").classList.remove("open");
-  runSync([...wiz.picked]);
+  runSync(wiz.saved);
 }
 
 async function openWizard(fromStart) {
@@ -1926,7 +2136,72 @@ async function loadSearchLog() {
     }
   } catch (e) { $("logTotals").textContent = e.message; }
 }
-$("logRefresh").addEventListener("click", loadSearchLog);
+$("logRefresh").addEventListener("click", () => { loadSearchLog(); loadRecordLog(); });
+
+// ---- Record updates: what FileMaker told Mitos about, one record at a time
+// (POST /api/records/changed, answered at once, worked off in a queue). Rows
+// with an error, or ids FileMaker no longer has, are red and sit on top; the
+// count shows on the Log tab.
+const idList = (ids) => { const a = (ids || []).map(String); return a.length > 6 ? a.slice(0, 6).join(", ") + " and " + (a.length - 6) + " more" : a.join(", "); };
+async function loadRecordLog() {
+  let d;
+  try { d = await apiJson("/api/records/log?limit=100"); }
+  catch { return; }
+  const list = Array.isArray(d) ? d : (d?.log || d?.entries || d?.items || []);
+  const bad = (e) => Boolean(e.error) || (e.notFound || []).length > 0;
+  const rows = list.filter(bad).concat(list.filter((e) => !bad(e)));
+  const n = list.filter(bad).length;
+  const badge = $("logBadge");
+  badge.style.display = n ? "" : "none"; badge.textContent = n ? String(n) : "";
+  const box = $("recRows"); box.innerHTML = "";
+  if (!rows.length) { box.innerHTML = '<p class="intro" style="margin:0">No record updates yet. They show here when FileMaker tells Mitos a record changed.</p>'; return; }
+  for (const e of rows) {
+    const r = el("div", "rrow" + (bad(e) ? " bad" : ""));
+    const when = el("span", "rwhen"); when.textContent = ago(e.at) || ""; when.title = e.at ? new Date(e.at).toLocaleString() : "";
+    const what = el("div", "rwhat");
+    const head = el("div");
+    const tbl = e.table ? friendly(e.table) : "";
+    if (e.error) head.textContent = e.error;
+    else head.textContent = `${tbl}: ${Number(e.updated || 0).toLocaleString()} updated, ${Number(e.deleted || 0).toLocaleString()} deleted`;
+    what.appendChild(head);
+    if (e.error && tbl) { const sub = el("div", "rsub"); sub.textContent = tbl + (e.ids?.length ? " · " + e.ids.length + " record" + (e.ids.length === 1 ? "" : "s") : ""); what.appendChild(sub); }
+    if ((e.notFound || []).length) { const sub = el("div", "rsub"); sub.textContent = `FileMaker no longer has ${e.notFound.length === 1 ? "this record" : "these " + e.notFound.length + " records"}: ${idList(e.notFound)}. Mitos removed ${e.notFound.length === 1 ? "it" : "them"} too.`; what.appendChild(sub); }
+    r.append(when, what);
+    box.appendChild(r);
+  }
+}
+
+// ---- Settings tab: where this Mitos runs and what it holds (GET /api/about),
+// and the gate: without a site password there is nothing to sign out of.
+let aboutInfo = null;
+const gateOff = () => aboutInfo?.gate === false || cfg?.gate === false;
+function applyGate() {
+  const row = $("dzSignout")?.closest(".dz-row");
+  if (row) row.style.display = gateOff() ? "none" : "";
+}
+const mbOf = (n) => { const v = Number(n) || 0; return v > 1e6 ? v / 1048576 : v; };
+const sizeOf = (n) => { const mb = mbOf(n); return mb >= 1024 ? (mb / 1024).toFixed(1) + " GB" : Math.round(mb).toLocaleString() + " MB"; };
+async function loadAbout() {
+  try { aboutInfo = await apiJson("/api/about"); } catch { aboutInfo = aboutInfo || null; }
+  applyGate();
+  const d = aboutInfo;
+  const grid = $("aboutGrid");
+  if (!d || d.error) { grid.innerHTML = '<span class="k">&nbsp;</span><span class="v">' + esc(d?.error || "The server did not say.") + "</span>"; return; }
+  const rows = [];
+  const add = (k, v, extra) => { if (v !== null && v !== undefined && v !== "") rows.push([k, String(v), extra || ""]); };
+  add("Region", d.region); add("Machine", d.machine);
+  if (d.memTotal) {
+    const tight = d.memUsed && Number(d.memUsed) / Number(d.memTotal) > 0.7;
+    add("Memory", (d.memUsed ? sizeOf(d.memUsed) + " used of " : "") + sizeOf(d.memTotal), tight ? "tight for large tables" : "");
+  }
+  if (d.cpus) add("CPU", d.cpus + (Number(d.cpus) === 1 ? " core" : " cores"));
+  if (d.diskTotal) add("Disk", (d.diskUsed != null ? sizeOf(d.diskUsed) + " used of " : "") + sizeOf(d.diskTotal));
+  add("Mitos's copy", `${Number(d.copyRows || 0).toLocaleString()} record${Number(d.copyRows) === 1 ? "" : "s"} in ${Number(d.copyTables || 0).toLocaleString()} table${Number(d.copyTables) === 1 ? "" : "s"}`);
+  if (d.lastSync) add("Last sync", ago(d.lastSync));
+  if (d.version) add("Mitos", d.version + (d.built ? " · built " + (/^\d{4}-\d\d-\d\d$/.test(d.built) ? new Date(d.built + "T12:00").toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : /^\d{4}-\d\d-\d\d/.test(d.built) ? whenShort(d.built) : d.built) : ""));
+  add("Build", d.image);
+  grid.innerHTML = rows.map(([k, v, x]) => `<span class="k">${esc(k)}</span><span class="v">${esc(v)}${x ? ` · <span class="tight">${esc(x)}</span>` : ""}</span>`).join("");
+}
 
 // ---- AI providers. Any number can be configured at once. The card shows a
 // chip per provider (configured, off, or no key); Edit opens a screen with
@@ -1987,8 +2262,9 @@ function renderProviderRows() {
         const fg = el("button", "link"); fg.type = "button"; fg.style.marginLeft = "10px"; fg.style.fontSize = "12px";
         fg.textContent = "forget this key" + (k.source === "in-app" ? " (use the server's, if any)" : "");
         fg.onclick = async () => {
-          if (!confirm("Forget the " + P.label + " key saved in Mitos?")) return;
+          if (!await askOnce("Forget this key?", "Mitos forgets the " + P.label + " key saved here. Add it again any time.", "Forget the key", "Cancel")) return;
           await postJsonQuiet("/api/config", { ai: { [P.cfgKey]: null } });
+          await fillModels(true);
           await loadConfig(); renderProviderRows();
         };
         st.appendChild(fg);
@@ -2009,6 +2285,8 @@ function renderProviderRows() {
         // and paint what it says.
         await postJson("/api/config", { ai: { [P.cfgKey]: v } });
         inp.value = "";
+        // A new key opens that provider's models: the lists load again at once.
+        await fillModels(true);
         await loadConfig();
         Object.assign(k, cfg?.ai?.keys?.[p] || {});
         sw.checked = enabledNow();
@@ -2049,7 +2327,10 @@ const STAGES = [
   { name: "enrich", label: "Enrichment", desc: "During sync, a fast model writes search notes for each record: other spellings, nicknames, plain words for what it is. Searched, never shown.", model: "chat", paid: true },
   { name: "semantic", label: "Semantic search", desc: "A vector per record, so a description finds the thing. Semantic matches are listed below the exact ones. Vectors are built during sync.", model: "embedding", paid: true },
   { name: "understand", label: "Enhanced search: Interpret meaning", desc: "A model turns a sentence like \"new computers since July\" into an exact search: a date range, the word computers, the Product table.", model: "chat" },
-  { name: "rerank", label: "Pick the best", desc: "A fast model reorders the short list and names one best match when it is sure. Below its confidence the list stands as the answer.", model: "chat" },
+  // Best match is its own switch (a plain rule, no model, no key). AI best
+  // match is the rerank stage, shown under it and only while Best match is on.
+  { name: "best", label: "Best match", desc: "Marks one record as the best match when it's clearly the one you meant. No model, no key." },
+  { name: "rerank", label: "Use AI to determine best match", desc: "A fast model reads the short list and names one best match when it is sure. Below its confidence the list stands as the answer.", model: "chat", sub: "best" },
 ];
 const HELP = {
   fuzzy: `<h4>What it does</h4><p>The exact search wants each word you type to start a word in the record. Close spellings runs beside it and compares your words to record names with Jaro-Winkler, a string similarity from record-linkage work: a number from 0 to 1 that rewards a shared beginning. It is arithmetic, not AI: the same words give the same answer every time.</p>
@@ -2067,8 +2348,11 @@ const HELP = {
   understand: `<h4>What it does</h4><p>A fast model reads what you typed and rewrites it in the exact search's own syntax: "people with birthdays in the first half of May" becomes a date range, "inv 2216" becomes 2216, "someone named bob whitfeld or something" becomes bob whitfeld. The exact search then runs again on the rewrite, so every hit still has a reason. Rows you already saw never disappear.</p>
 <h4>When it runs</h4><p>Only for two or more words. A single word, a number, a date, an email or a phone is already understood. About a second with Claude Haiku; the exact list never waits for it. The same words are read once and remembered.</p>
 <h4>Cost</h4><p>A fraction of a cent per search.</p>`,
-  rerank: `<h4>What it does</h4><p>A fast model reads your search and the short list, reorders it, and names one best match when it is sure. That record is shown on top as "Best match" with the reason. Below its confidence the list stands as the answer, and a tie means a list, never a guess.</p>
-<h4>Without it</h4><p>Mitos still names a best match by rule: exactly one record carries every word in its name and the next is well behind, or an email, phone or number that only one record has.</p>
+  best: `<h4>What it does</h4><p>Mitos names one record as the best match, on top of the list, when it is clearly the one you meant. No model and no key: it is a plain rule, so the same words give the same answer every time.</p>
+<h4>The rule</h4><p>For words: every word you typed matches the top record (the start of a word counts, so "ram" matches "Ramen"), and the next record scores well below it. Or an email, phone or number that only one record has. A close spelling can also win when it is far ahead of the rest.</p>
+<h4>When it is off</h4><p>No record is marked as the best match. The list is the answer. AI best match goes with it, since it hangs on this switch.</p>`,
+  rerank: `<h4>What it does</h4><p>A fast model reads your search and the short list, reorders it, and names one best match when it is sure. That record is shown on top as "Best match, picked by AI". Below its confidence the list stands as the answer, and a tie means a list, never a guess.</p>
+<h4>Without it</h4><p>Mitos still names a best match by rule (the Best match switch above): every word you typed matches the top record and the next one is well behind, or an email, phone or number that only one record has.</p>
 <h4>When it runs</h4><p>Only for word searches with two or more candidates. About a second with Claude Haiku. A fraction of a cent per search.</p>`,
   fields: `<h4>Search</h4><p>The field's values go into the searchable text and the typed columns (numbers, dates, emails, phones), so what you type can match them.</p>
 <h4>Show</h4><p>The field's value appears on the result row, in this order, copied exactly from the record. Nothing generated is ever shown.</p>
@@ -2084,6 +2368,54 @@ function showHelp(key, title) {
 $("helpDone").onclick = () => $("helpOverlay").classList.remove("open");
 const helpBtn = (key, title) => { const b = el("button", "helpbtn"); b.type = "button"; b.textContent = "?"; b.title = "What this does"; b.onclick = (e) => { e.stopPropagation(); showHelp(key, title); }; return b; };
 
+// ---- Models by job. The list comes from navarre.ai (the server passes it on):
+// every model has a job (reasoning, workhorse, cheap, embedding, rerank), and
+// the file describes each job in a line. Menus group by job, the stage's
+// recommended job first, recommended models marked.
+const JOB_ORDER = ["reasoning", "workhorse", "cheap", "embedding", "rerank"];
+const jobName = (j) => String(j || "").charAt(0).toUpperCase() + String(j || "").slice(1);
+const jobHead = (j) => j === "other" ? "Models" : jobName(j) + (modelList?.jobs?.[j] ? ": " + modelList.jobs[j] : "");
+const recJob = (stage) => modelList?.recommended?.[stage] || "";
+// Matt's words for the AI best match: medium to low.
+function recHint(stage) {
+  if (stage === "rerank") return "Recommended: medium to low";
+  const j = recJob(stage);
+  return j ? "Recommended: " + j : "";
+}
+// "default (id)": the server's own pick for the stage.
+function defaultLabel(stage, s) {
+  const id = s?.defaultModel || cfg?.ai?.defaults?.[stage] || "";
+  return "default" + (id ? " (" + id + ")" : "");
+}
+// Chat models can run a stage; embedding and rerank models cannot.
+const isChatModel = (m) => m.kind !== "embedding" && m.job !== "embedding" && m.job !== "rerank";
+// Adds the models to a select, grouped by job: the stage's recommended job
+// first, then the rest in the file's order. Only models whose provider has a key.
+function addJobOptions(sel, models, stage) {
+  const rec = recJob(stage);
+  // A model with no job (the public list could not be loaded) goes in one plain group.
+  models = models.map((m) => (m.job ? m : { ...m, job: "other" }));
+  const have = new Set(models.map((m) => m.job));
+  const order = [rec, ...JOB_ORDER, ...[...have].filter((j) => !JOB_ORDER.includes(j))].filter((j, i, a) => j && have.has(j) && a.indexOf(j) === i);
+  const multi = new Set(models.map((m) => m.provider)).size > 1;
+  for (const job of order) {
+    const g = document.createElement("optgroup"); g.label = jobHead(job);
+    for (const m of models.filter((x) => x.job === job)) {
+      const o = document.createElement("option"); o.value = m.id;
+      o.textContent = (multi ? (PROVIDERS[m.provider]?.label || m.provider) + " · " : "") + (m.name || m.id) + (m.recommended ? " (recommended)" : "");
+      const price = m.in != null && m.out != null ? "$" + m.in + " in, $" + m.out + " out per million tokens" : "";
+      o.title = [m.note, price].filter(Boolean).join(" · ");
+      g.appendChild(o);
+    }
+    sel.appendChild(g);
+  }
+}
+// The model a menu should land on when nothing is saved: the stage's
+// recommended model, else the first one shown.
+const recommendedPick = (models, stage) => (models.find((m) => m.recommended && m.job === recJob(stage)) || models.find((m) => m.recommended) || models[0] || {}).id || "";
+// An embedding model that can be called now: its provider has a key.
+const hasEmbedModel = () => (modelList?.models || []).some((m) => m.kind === "embedding" && m.usable);
+
 // The AI tab's stage list by default; the wizard's AI stages step passes its
 // own container. The paid-passes card belongs to the AI tab only.
 function renderStages(target) {
@@ -2093,37 +2425,48 @@ function renderStages(target) {
   const cov = cfg?.ai?.coverage || {};
   const all = modelList?.models || [];
   const keys = cfg?.ai?.keys || {};
+  const post = async (patch) => { await postJson("/api/config", { ai: { stages: patch } }); await loadConfig(); };
   for (const S of STAGES) {
+    // AI best match hangs under Best match: no switch, no row.
+    if (S.sub && !st[S.sub]?.on) continue;
     const s = st[S.name] || {};
-    const row = el("div", "stg");
+    const row = el("div", "stg" + (S.sub ? " sub" : ""));
     const sw = document.createElement("input"); sw.type = "checkbox"; sw.className = "sw"; sw.checked = Boolean(s.on); sw.dataset.stage = S.name;
     const body = el("div", "body");
     const nm = el("div", "nm"); nm.textContent = S.label; nm.appendChild(helpBtn(S.name, S.label));
     const ds = el("div", "ds"); ds.textContent = S.desc;
     const ctl = el("div", "ctl");
-    if (S.model) {
+    // Semantic search needs a provider that offers embeddings. Without a key
+    // for one: say so, offer the way in, no menu, and the switch stays off.
+    const needsKey = S.name === "semantic" && !hasEmbedModel();
+    if (needsKey) {
+      sw.disabled = !s.on;
+      const msg = el("span"); msg.textContent = "No embedding model found. Add a Google, OpenAI or Voyage key, or refresh the model list.";
+      const add = el("button", "btn"); add.type = "button"; add.textContent = "Add a key"; add.style.fontSize = "12px"; add.style.padding = "4px 10px";
+      add.onclick = openProviders;
+      const rf = el("button", "btn"); rf.type = "button"; rf.textContent = "Refresh the list"; rf.style.fontSize = "12px"; rf.style.padding = "4px 10px";
+      rf.onclick = async () => { rf.disabled = true; rf.textContent = "Refreshing..."; await fillModels(true); };
+      ctl.append(msg, add, rf);
+    } else if (S.model) {
       const sel = document.createElement("select"); sel.dataset.stage = S.name; sel.dataset.field = "model";
-      const usable = all.filter((m) => (S.model === "embedding" ? m.kind === "embedding" : m.kind !== "embedding") && keys[m.provider]?.configured);
-      const o0 = document.createElement("option"); o0.value = ""; o0.textContent = "default" + (s.model ? " (" + s.model + ")" : ""); sel.appendChild(o0);
-      let group = null, gk = "";
-      for (const m of usable) {
-        const g = (cfg?.ai?.providers?.[m.provider]?.label || m.provider);
-        if (g !== gk) { group = document.createElement("optgroup"); group.label = g; sel.appendChild(group); gk = g; }
-        const o = document.createElement("option"); o.value = m.id; o.textContent = m.name || m.id;
-        group.appendChild(o);
-      }
+      const usable = all.filter((m) => (S.model === "embedding" ? m.kind === "embedding" : isChatModel(m)) && (m.usable ?? keys[m.provider]?.configured));
+      // default (id): the server's own pick for this stage, by tier.
+      const o0 = document.createElement("option"); o0.value = ""; o0.textContent = defaultLabel(S.name, s); sel.appendChild(o0);
+      addJobOptions(sel, usable, S.name);
       const lab = el("span"); lab.textContent = "model"; ctl.append(lab, sel);
       // A model change on a paid stage is a rebuild: say so, and save only on a yes.
       modelPicker(sel, async (id) => {
         if (S.paid && s.on) {
           const est = await apiJson("/api/ai/estimate").catch(() => null);
           const n = S.name === "semantic" ? (cov.totalRows || 0) : (est?.enrich?.rows || 0);
-          if (!confirm(`Changing the model rebuilds ${S.name === "semantic" ? "every vector" : "the notes"}: ${Number(n).toLocaleString()} records on the next Run. Change it?`)) { setPicked(sel, s.savedModel || ""); return; }
+          if (!await askOnce("Change the model?", `Changing the model rebuilds ${S.name === "semantic" ? "every vector" : "the notes"}: ${Number(n).toLocaleString()} records on the next Run.`, "Change it", "Cancel")) { setPicked(sel, s.savedModel || ""); return; }
         }
         await postJson("/api/config", { ai: { stages: { [S.name]: { model: id } } } });
         await loadConfig();
       });
       setPicked(sel, s.savedModel || "");
+      const hint = recHint(S.name);
+      if (hint) { const h = el("div", "rec"); h.textContent = hint; ctl.appendChild(h); }
     }
     if (S.name === "fuzzy") {
       const sel = document.createElement("select");
@@ -2133,7 +2476,7 @@ function renderStages(target) {
       sel.onchange = async () => { await postJson("/api/config", { ai: { stages: { fuzzy: { minSim: Number(sel.value) } } } }); await loadConfig(); };
       const lab = el("span"); lab.textContent = "how close"; ctl.append(lab, sel);
     }
-    if (S.model) {
+    if (S.model && !needsKey) {
       const tb = el("button", "btn"); tb.type = "button"; tb.textContent = "Test"; tb.style.fontSize = "12px"; tb.style.padding = "4px 10px";
       tb.onclick = async () => {
         status.className = "st"; status.textContent = "testing...";
@@ -2146,19 +2489,29 @@ function renderStages(target) {
     }
     // The status line only when it says something the switch does not.
     const status = el("div", "st");
-    if (s.on && !s.ready) { status.className = "st warn"; status.textContent = "on, but cannot run: " + (s.why || "no key") + ". Add the key under Providers."; }
-    else if (s.on && S.name === "semantic") { status.className = "st ok"; status.textContent = `${Number(cov.embedded || 0).toLocaleString()} of ${Number(cov.totalRows || 0).toLocaleString()} records have vectors` + ((cov.embedded || 0) < (cov.totalRows || 0) ? " (see Paid passes below)" : ""); }
+    if (s.on && !s.ready && !needsKey) { status.className = "st warn"; status.textContent = "on, but cannot run: " + (s.why || "no key") + ". Add the key under Providers."; }
+    else if (s.on && S.name === "semantic") {
+      const sv = semCounts();
+      status.className = "st ok";
+      status.textContent = sv.vectors >= sv.rows ? "Every record already has a vector." : `${sv.vectors.toLocaleString()} of ${sv.rows.toLocaleString()} records have vectors (see Paid passes below)`;
+    }
     else if (s.on && S.name === "enrich") { status.className = "st ok"; status.textContent = `${Number(cov.enriched || 0).toLocaleString()} records have notes`; }
     sw.onchange = async () => {
       // Off is always one click. On is a formal step for the paid stages.
+      if (S.name === "semantic" && !sw.checked) { sw.checked = true; semanticOff(status, sw); return; }
       if (!sw.checked || !S.paid) {
         sw.disabled = true;
-        try { await postJson("/api/config", { ai: { stages: { [S.name]: { on: sw.checked } } } }); await loadConfig(); }
+        try {
+          // Best match off takes AI best match with it: a model must not go on
+          // reading the list, and being paid for, behind a hidden switch.
+          if (S.name === "best" && !sw.checked) await post({ best: { on: false }, rerank: { on: false } });
+          else await post({ [S.name]: { on: sw.checked } });
+        }
         catch (e) { status.className = "st warn"; status.textContent = e.message; sw.disabled = false; }
         return;
       }
       sw.checked = false;
-      if (S.name === "semantic") openSemanticGate();
+      if (S.name === "semantic") semanticOn(status, sw);
       else openEnrichWindow();
     };
     body.append(nm, ds, ctl, status);
@@ -2175,23 +2528,66 @@ function collectStages() { return {}; }
 // A pass cost: under one cent says so; otherwise dollars, two decimals.
 const money = (n) => { const v = Number(n) || 0; return v > 0 && v < 0.01 ? "less than 1¢" : "$" + v.toFixed(2); };
 const aboutMoney = (n) => { const m = money(n); return m.startsWith("less") ? m : "about " + m; };
-async function openSemanticGate() {
+const fmtBytes = (n) => { const b = Number(n) || 0; return b >= 1073741824 ? (b / 1073741824).toFixed(1) + " GB" : b >= 1048576 ? Math.round(b / 1048576).toLocaleString() + " MB" : Math.max(1, Math.round(b / 1024)).toLocaleString() + " KB"; };
+// What the vectors cover right now: only tables with semantic search on count.
+function semCounts() {
+  const cov = cfg?.ai?.coverage || {};
+  const ts = (cov.tables || []).filter((t) => semOn(t.src_table) !== false);
+  if (!ts.length) return { rows: Number(cov.totalRows || 0), vectors: Number(cov.embedded || 0), bytes: 0 };
+  return { rows: ts.reduce((a, t) => a + Number(t.rows || 0), 0), vectors: ts.reduce((a, t) => a + Number(t.vectors ?? t.embedded ?? 0), 0), bytes: ts.reduce((a, t) => a + Number(t.vectorBytes || 0), 0) };
+}
+const allVectors = () => {
+  const cov = cfg?.ai?.coverage || {};
+  const ts = cov.tables || [];
+  return { n: ts.length ? ts.reduce((a, t) => a + Number(t.vectors ?? t.embedded ?? 0), 0) : Number(cov.embedded || 0), bytes: ts.reduce((a, t) => a + Number(t.vectorBytes || 0), 0) };
+};
+async function setSemantic(on) { await postJson("/api/config", { ai: { stages: { semantic: { on } } } }); await loadConfig(); }
+// Switching ON: with nothing to build the switch just turns on; otherwise the
+// gate shows the count and the price first. The count is the estimate's, never
+// the total row count.
+async function semanticOn(status, sw) {
+  status.className = "st"; status.textContent = "checking...";
   const est = await apiJson("/api/ai/estimate").catch(() => null);
-  const rows = cfg?.ai?.coverage?.totalRows || 0;
-  const model = cfg?.ai?.stages?.semantic?.model || "the default model";
-  const perRow = est?.embed?.rows ? est.embed.cost / est.embed.rows : 0.0000075;
-  const cost = est?.embed?.rows ? est.embed.cost : rows * perRow;
+  if (!est?.embed) { status.className = "st warn"; status.textContent = "Could not read the price. Try again."; return; }
+  if (!Number(est.embed.rows)) {
+    try { await setSemantic(true); } catch (e) { status.className = "st warn"; status.textContent = e.message; }
+    return;
+  }
+  status.textContent = "";
+  openSemanticGate(est);
+}
+// Switching OFF deletes the vectors (they take room on the disk): ask first,
+// with the server's numbers.
+async function semanticOff(status, sw) {
+  const v = allVectors();
+  const est = await apiJson("/api/ai/estimate").catch(() => null);
+  const cost = Number(est?.embed?.rebuildCost) || (Number(est?.embed?.rows) > 0 ? Number(est.embed.cost) / Number(est.embed.rows) * v.n : 0);
+  const text = v.n
+    ? `Turning off semantic search deletes all ${v.n.toLocaleString()} vectors${v.bytes ? " (" + fmtBytes(v.bytes) + ")" : ""}. Turning it back on rebuilds them${cost ? ", " + aboutMoney(cost) : ""}.`
+    : "Semantic search turns off. There are no vectors to delete.";
+  if (!await askOnce("Turn off semantic search?", text, v.n ? "Turn off and delete" : "Turn off", "Cancel")) { sw.checked = true; return; }
+  sw.disabled = true; status.className = "st"; status.textContent = "Deleting the vectors...";
+  const r = await dzPost("/api/ai/semantic/off", {});
+  if (r.error) { status.className = "st warn"; status.textContent = dzSaid(r); sw.checked = true; sw.disabled = false; return; }
+  await loadConfig();
+  const st2 = document.querySelector('#stageList .stg input[data-stage="semantic"]')?.closest(".stg")?.querySelector(".st");
+  if (st2) { st2.className = "st ok"; st2.textContent = `Deleted ${Number(r.deleted || 0).toLocaleString()} vector${Number(r.deleted) === 1 ? "" : "s"}${r.bytesFreed ? ", freed " + fmtBytes(r.bytesFreed) : ""}.`; }
+}
+async function openSemanticGate(est) {
+  const model = est.embed.model || cfg?.ai?.stages?.semantic?.model || "the default model";
+  const need = Number(est.embed.rows) || 0, cost = Number(est.embed.cost) || 0;
   $("syncConfirmBody").innerHTML =
     `<div><strong>Semantic search</strong> builds one vector per record with <strong>${esc(model)}</strong>.</div>` +
-    `<div style="margin-top:10px">${Number(est?.embed?.rows || rows).toLocaleString()} records need vectors, <strong>${aboutMoney(cost)}</strong> and a few minutes.</div>` +
+    `<div style="margin-top:10px">${need.toLocaleString()} record${need === 1 ? "" : "s"} need${need === 1 ? "s" : ""} vectors, <strong>${aboutMoney(cost)}</strong> and a few minutes.</div>` +
     `<div class="note" style="margin-top:10px">Run now builds them all. Later switches the stage on and builds up to 5,000 per sync; the rest waits for Run on the AI tab.</div>`;
+  $("syncConfirmOverlay").querySelector(".p-head strong").textContent = "Semantic search";
   $("syncConfirmOverlay").classList.add("open");
   $("syncConfirmCancel").textContent = "Cancel";
   $("syncConfirmGo").textContent = "Run now";
   const later = $("syncConfirmLater"); later.style.display = ""; later.textContent = "Later";
   $("syncConfirmCancel").onclick = () => { $("syncConfirmOverlay").classList.remove("open"); };
-  later.onclick = async () => { $("syncConfirmOverlay").classList.remove("open"); await postJson("/api/config", { ai: { stages: { semantic: { on: true } } } }); await loadConfig(); };
-  $("syncConfirmGo").onclick = async () => { $("syncConfirmOverlay").classList.remove("open"); await postJson("/api/config", { ai: { stages: { semantic: { on: true } } } }); await loadConfig(); runSync(null, { full: true, stagesOnly: true }); };
+  later.onclick = async () => { $("syncConfirmOverlay").classList.remove("open"); await setSemantic(true); };
+  $("syncConfirmGo").onclick = async () => { $("syncConfirmOverlay").classList.remove("open"); await setSemantic(true); runSync(null, { full: true, stagesOnly: true }); };
 }
 async function renderPasses() {
   const box = $("passList"); if (!box) return;
@@ -2219,7 +2615,7 @@ async function renderPasses() {
   else if (nt.length) enrichTxt = `${notes.toLocaleString()} of ${rows.toLocaleString()} records have notes` + (pending ? ` · ${aboutMoney(n.cost)} for the rest · ${n.model}` : "");
   else enrichTxt = pending ? `${pending.toLocaleString()} records need notes · ${aboutMoney(n.cost)} · ${n.model}` : "every chosen record has notes";
   line("Enrichment", enrichTxt, n.on && pending ? runStages : null);
-  line("Semantic search", !e.on ? "off" : e.rows ? `${Number(e.rows).toLocaleString()} records need vectors · ${aboutMoney(e.cost)} · ${e.model}` : "every record has a vector", e.on && e.rows ? runStages : null);
+  line("Semantic search", !e.on ? "off" : !hasEmbedModel() ? "no embedding model found" : e.rows ? `${Number(e.rows).toLocaleString()} records need vectors · ${aboutMoney(e.cost)} · ${e.model}` : "every record has a vector", e.on && e.rows && hasEmbedModel() ? runStages : null);
   const led = el("div", "ledger");
   if (!est.passes?.length) led.textContent = "No paid pass has run yet.";
   else for (const p of est.passes) { const d = el("div"); d.textContent = `${ago(p.at)} · ${p.kind === "embed" ? "vectors" : "notes for " + (p.label || p.table)} · ${Number(p.rows).toLocaleString()} records · ${Math.round((p.ms || 0) / 1000)}s · ${money(p.cost)} · ${p.model}`; led.appendChild(d); }
@@ -2232,10 +2628,11 @@ async function openEnrichWindow() {
   const o = $("enrichOverlay");
   o.classList.add("open");
   const s = cfg?.ai?.stages?.enrich || {};
-  const all = (modelList?.models || []).filter((m) => m.kind !== "embedding" && cfg?.ai?.keys?.[m.provider]?.configured);
+  const all = (modelList?.models || []).filter((m) => isChatModel(m) && (m.usable ?? cfg?.ai?.keys?.[m.provider]?.configured));
   const sel = $("enModel"); sel.innerHTML = "";
-  const o0 = document.createElement("option"); o0.value = ""; o0.textContent = "default" + (s.model ? " (" + s.model + ")" : ""); sel.appendChild(o0);
-  for (const m of all) { const op = document.createElement("option"); op.value = m.id; op.textContent = (PROVIDERS[m.provider]?.label || m.provider) + " · " + (m.name || m.id); sel.appendChild(op); }
+  const o0 = document.createElement("option"); o0.value = ""; o0.textContent = defaultLabel("enrich", s); sel.appendChild(o0);
+  addJobOptions(sel, all, "enrich");
+  $("enHint").textContent = recHint("enrich");
   modelPicker(sel, () => {}); // read at Later or Run now
   setPicked(sel, s.savedModel || "");
   $("enPrompt").value = s.prompt || "";
@@ -2252,9 +2649,14 @@ async function openEnrichWindow() {
   const picked = () => [...tl.querySelectorAll("input:checked")].map((c) => c.value);
   const estimate = async () => {
     const rows = picked().reduce((a, raw) => a + Number((cfg?.ai?.coverage?.tables || []).find((x) => x.src_table === raw)?.rows || 0), 0);
-    $("enEstimate").textContent = rows ? `${rows.toLocaleString()} records, ${aboutMoney(rows * 0.0003)} with Claude Haiku, one call per ten records.` : "Pick at least one table.";
+    // The price per million tokens comes from the model list: about 150 tokens
+    // in and 120 out for each record.
+    const mid = pickedModel(sel) || s.defaultModel || cfg?.ai?.defaults?.enrich || "";
+    const mm = (modelList?.models || []).find((m) => m.id === mid);
+    const per = mm && mm.in != null && mm.out != null ? (150 * mm.in + 120 * mm.out) / 1e6 : 0.0003;
+    $("enEstimate").textContent = rows ? `${rows.toLocaleString()} records, ${aboutMoney(rows * per)} with ${mm?.name || mid || "the default model"}, one call per ten records.` : "Pick at least one table.";
   };
-  tl.onchange = estimate; estimate();
+  tl.onchange = estimate; sel.addEventListener("change", estimate); estimate();
   $("enPreviewBtn").onclick = async () => {
     const tables = picked(); if (!tables.length) { $("enPreview").innerHTML = '<div class="note">Pick a table first.</div>'; return; }
     $("enPreview").innerHTML = '<div class="note">writing sample notes... (a few cents)</div>';
@@ -2322,38 +2724,197 @@ function modelPicker(sel, apply) {
 }
 // The picker's value for saving: a real id, never the Other... marker.
 const pickedModel = (sel) => (sel.value && sel.value !== OTHER ? sel.value : "");
-function fillSelect(sel, models, current, allowNone, noneLabel) {
+function fillSelect(sel, models, current, allowNone, noneLabel, stage) {
   sel.innerHTML = "";
   if (allowNone) { const o = document.createElement("option"); o.value = ""; o.textContent = noneLabel || "not set"; sel.appendChild(o); }
-  let seen = false, group = null, groupKey = "";
-  for (const m of models) {
-    const gk = m.family || "";
-    if (gk !== groupKey) { group = document.createElement("optgroup"); group.label = gk; sel.appendChild(group); groupKey = gk; }
-    const o = document.createElement("option");
-    o.value = m.id; o.textContent = m.name || m.id;
-    if (m.id === current) { o.selected = true; seen = true; }
-    group.appendChild(o);
+  addJobOptions(sel, models, stage || "naming");
+  const seen = [...sel.options].some((o) => o.value === current);
+  if (current) {
+    if (seen) sel.value = current;
+    // The configured model may belong to the other provider or be gone from
+    // the list. Keep it visible rather than silently switching.
+    else { const o = document.createElement("option"); o.value = current; o.textContent = current; o.selected = true; sel.insertBefore(o, sel.firstChild); }
   }
-  // The configured model may belong to the other provider or be gone from
-  // the list. Keep it visible rather than silently switching.
-  if (!seen && current) { const o = document.createElement("option"); o.value = current; o.textContent = current; o.selected = true; sel.insertBefore(o, sel.firstChild); }
 }
 function fillModelSelects() {
   const all = modelList?.models || [];
   const keys = cfg?.ai?.keys || {};
   // Every enabled provider's chat models, grouped by provider.
-  const chat = all.filter((m) => m.kind !== "embedding" && keys[m.provider]?.configured)
-    .map((m) => ({ ...m, family: PROVIDERS[m.provider]?.label || m.provider }));
+  const chat = all.filter((m) => isChatModel(m) && (m.usable ?? keys[m.provider]?.configured));
   const cur = cfg?.ai?.models || {};
-  fillSelect($("namingModelSel"), chat, cur.naming || cfg?.ai?.naming?.model, false);
+  fillSelect($("namingModelSel"), chat, cur.naming || cfg?.ai?.naming?.model, false, "", "naming");
+  $("namingHint").textContent = recHint("naming");
   modelPicker($("namingModelSel"), () => {}); // read at Save
   renderStages();
   // A switch flipped inside the wizard reloads config; its list follows.
   if (wiz.open && wiz.step === 6) renderStages($("wizStages"));
 }
-// The model lists come from the providers, read server-side: each enabled
-// provider's own list, newest first. Never a list baked into this file.
+// The model list is navarre.ai's, passed on by the server. Never a list baked
+// into this file.
 async function fillModels(refresh) {
   try { modelList = await apiJson("/api/ai/models" + (refresh ? "?refresh=1" : "")); } catch { modelList = modelList || { models: [] }; }
   fillModelSelects();
 }
+
+// ---- Danger zone (Settings tab, the last card). Everything that
+// deletes, in one place; each asks once. FileMaker is never touched by any of
+// it. Pythia's pattern.
+// Reset keys, as the server knows them. Ticked at first: what a reset has
+// always wiped (the index and the copies).
+const RESET_ITEMS = [
+  ["index", "Search index and vectors", "Search comes back empty until the next sync."],
+  ["copies", "Local copies of your tables", "What Mitos synced from FileMaker. Sync again to get it back."],
+  ["notes", "AI search notes", "The notes a model wrote for each record. Written again on a sync."],
+  ["config", "FileMaker connection and table choice", "Mitos goes back to the setup wizard."],
+  ["keys", "Saved AI keys", "Mitos cannot use AI until you add a key again."],
+  ["logs", "Search and click log", "The list on the Log tab."],
+  ["sessions", "Sign-ins", "Everyone is signed out, you too."],
+];
+const RESET_TICKED = ["index", "copies"];
+// Every call the Danger zone makes. A page that is not JSON (a proxy's 502)
+// or no answer at all comes back as { error }, said plainly, with the status;
+// a JSON answer, a 409 included, comes back as the server wrote it.
+async function dzCall(path, opts) {
+  let r, txt;
+  try { r = await fetch(path, opts); txt = await r.text(); }
+  catch { return { error: "the server did not answer. Try again.", status: 0 }; }
+  let j = null; try { j = JSON.parse(txt); } catch {}
+  if (r.status === 401) { location.href = "/signin?next=" + encodeURIComponent(location.pathname + location.search); return { error: "You are signed out. Sign in again.", status: 401 }; }
+  if (!j || typeof j !== "object") return { error: `the server answered ${r.status}, and it was not a Mitos answer. Try again.`, status: r.status };
+  if (!r.ok && !j.error) j.error = `the server answered ${r.status}. Try again.`;
+  return { ...j, status: r.status };
+}
+const dzPost = (path, body) => dzCall(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body || {}) });
+const dzSaid = (r) => (r.status >= 400 && r.status < 500 ? r.error : "Not done: " + r.error);
+function askOnce(title, text, verb, noLabel = "Close") {
+  $("askTitle").textContent = title; $("askText").textContent = text;
+  $("askYes").textContent = verb; $("askNo").textContent = noLabel;
+  $("askOverlay").classList.add("open");
+  return new Promise((resolve) => {
+    const done = (v) => { $("askOverlay").classList.remove("open"); resolve(v); };
+    $("askYes").onclick = () => done(true); $("askNo").onclick = () => done(false);
+  });
+}
+const resetTicked = () => [...$("resetList").querySelectorAll("input:checked")].map((i) => i.value);
+function paintResetGo() {
+  const n = resetTicked().length, all = n === $("resetList").querySelectorAll("input").length;
+  $("resetGo").disabled = n === 0;
+  $("resetGo").textContent = all ? "Wipe everything" : "Wipe what is ticked";
+  $("resetLead").textContent = all
+    ? "This is a total wipe. Mitos goes back to a fresh install, with no connection and no keys."
+    : n === 0 ? "Tick at least one thing to wipe." : "Tick what to wipe. The boxes ticked already are what a reset has always wiped.";
+  $("resetLead").style.color = all ? "var(--warn)" : "var(--dim)";
+}
+$("dzReset").onclick = () => {
+  const list = $("resetList"); list.innerHTML = "";
+  for (const [key, name, line] of RESET_ITEMS) {
+    if (key === "sessions" && gateOff()) continue;
+    const row = el("label", "rs-row");
+    row.innerHTML = `<input type="checkbox" value="${key}"${RESET_TICKED.includes(key) ? " checked" : ""}><div><div class="rs-n">${esc(name)}</div><div class="rs-d">${esc(line)}</div></div>`;
+    row.querySelector("input").onchange = paintResetGo;
+    list.appendChild(row);
+  }
+  $("resetMsg").textContent = "";
+  paintResetGo();
+  $("resetOverlay").classList.add("open");
+};
+$("resetAll").onclick = () => { $("resetList").querySelectorAll("input").forEach((i) => { i.checked = true; }); paintResetGo(); };
+$("resetCancel").onclick = () => $("resetOverlay").classList.remove("open");
+// The page's own memory of what was wiped: nothing may remember an old server
+// or an old key (the wizard would offer them again).
+function forgetWiped(items) {
+  if (items.includes("copies") || items.includes("index")) syncedSet = new Set();
+  if (items.includes("config")) {
+    for (const id of ["fmHost", "fmUser", "fmDb", "fmPass", "wizHost", "wizUser", "wizPass"]) $(id).value = "";
+    $("fmPass").placeholder = ""; $("wizPass").placeholder = ""; $("fmTestStatus").textContent = "";
+    loadedFm = { host: "", db: "", user: "", hasPass: false };
+    scannedTables = null; $("tblList").innerHTML = ""; activeTab = null; displayNames = {};
+    Object.assign(wiz, { connOk: false, filesOk: false, scanOk: false, keySkipped: false, stagesSeen: false, tables: [], picked: new Set(), saved: [], finishing: false });
+    wizLine("wizConnOk", ""); wizLine("wizFilesOk", ""); wizLine("wizScanOk", "");
+  }
+  if (items.includes("keys")) { hasKeyNow = false; wiz.keyOk = false; $("wizKey").value = ""; wizLine("wizKeyOk", ""); }
+}
+$("resetGo").onclick = async () => {
+  const items = resetTicked(); if (!items.length) return;
+  // The red button asks once more, in the app's own panel.
+  const sure = items.length === $("resetList").querySelectorAll("input").length
+    ? await askOnce("Wipe everything?", "Mitos goes back to a fresh install, with no connection and no keys. Nothing in FileMaker changes.", "Wipe everything")
+    : await askOnce(items.length === 1 ? "Wipe this one thing?" : `Wipe these ${items.length} things?`,
+      RESET_ITEMS.filter(([k]) => items.includes(k)).map(([, n]) => "· " + n).join("\n") + "\n\nNothing in FileMaker changes.", "Wipe what is ticked");
+  if (!sure) return;
+  $("resetGo").disabled = true; $("resetMsg").style.color = "var(--dim)"; $("resetMsg").textContent = "Wiping...";
+  const r = await dzPost("/api/reset", { items });
+  // A refusal (a sync running) is said as the server says it.
+  if (r.error) { $("resetMsg").style.color = "var(--warn)"; $("resetMsg").textContent = dzSaid(r); paintResetGo(); return; }
+  $("resetOverlay").classList.remove("open");
+  const wiped = Array.isArray(r.wiped) ? r.wiped : items;
+  forgetWiped(wiped);
+  // Signed out means signed out: the sign-in page is the next screen.
+  if (wiped.includes("sessions")) { location.href = "/signin"; return; }
+  await loadConfig(); refreshStatus();
+  // A wipe of the connection goes back to the setup wizard, at step 1.
+  const kept = (r.keptOnServer || []).map((k) => k === "config" ? "its FileMaker connection" : k === "keys" ? "its AI keys" : k);
+  $("dzMsg").textContent = `Wiped ${wiped.length} thing${wiped.length === 1 ? "" : "s"}. Nothing in FileMaker changed.` +
+    (kept.length ? ` The server still has ${kept.join(" and ")} of its own, set outside Mitos, so Mitos still uses ${kept.length === 1 && /connection/.test(kept[0]) ? "it" : "them"}.` : "");
+  if (r.needsSetup || wiped.includes("config")) { await openWizard(true); return; }
+};
+// Delete the local copy of one table. The server unticks it as well.
+$("dzDrop").onclick = () => {
+  const sel = $("dropPick"); sel.innerHTML = "";
+  $("dropMsg").textContent = "";
+  const synced = (cfg?.index?.tables || []).slice().sort((a, b) => byFriendly(a.src_table, b.src_table));
+  for (const t of synced) {
+    const o = document.createElement("option"); o.value = t.src_table;
+    const n = Number(t.rows ?? t.n ?? t.count);
+    o.textContent = friendly(t.src_table) + (friendly(t.src_table) !== t.src_table ? ` (${t.src_table})` : "") + (Number.isFinite(n) ? `, ${n.toLocaleString()} records` : "");
+    sel.appendChild(o);
+  }
+  if (!synced.length) { const o = document.createElement("option"); o.value = ""; o.textContent = "Nothing is synced yet"; sel.appendChild(o); }
+  $("dropGo").disabled = !synced.length;
+  $("dropOverlay").classList.add("open");
+};
+$("dropCancel").onclick = () => $("dropOverlay").classList.remove("open");
+$("dropGo").onclick = async () => {
+  const raw = $("dropPick").value; if (!raw) return;
+  const label = friendly(raw);
+  $("dropGo").disabled = true; $("dropMsg").style.color = "var(--dim)"; $("dropMsg").textContent = "Deleting...";
+  const r = await dzPost("/api/tables/drop", { table: raw });
+  if (r.error) { $("dropMsg").style.color = "var(--warn)"; $("dropMsg").textContent = dzSaid(r); $("dropGo").disabled = false; return; }
+  $("dropOverlay").classList.remove("open");
+  syncedSet.delete(raw); scannedTables = null;
+  await loadConfig(); refreshStatus();
+  $("dzMsg").textContent = `Deleted Mitos's local copy of ${label}. Your FileMaker data is untouched. Tick it again on the Tables tab and sync to bring it back.`;
+};
+$("dzRebuild").onclick = async () => {
+  if (!await askOnce("Rebuild the search index?", "Mitos builds the index again from its local copies. Nothing is read from FileMaker. Search is thin until it is done.", "Rebuild", "Close")) return;
+  runSync(null, { rebuild: true });
+};
+$("dzSignout").onclick = async () => {
+  if (!await askOnce("Sign everyone out?", "Everyone who is signed in, you too, has to sign in again. Nothing is deleted.", "Sign out all")) return;
+  const r = await dzPost("/api/reset", { items: ["sessions"] });
+  if (r.error) { $("dzMsg").textContent = dzSaid(r); return; }
+  location.href = "/signin";
+};
+// Delete this Mitos: wipe everything, then the one command Mitos cannot run
+// itself. Only on Fly, where the server says its app name.
+$("dzDelete").onclick = async () => {
+  if (!flyApp) return;
+  if (!await askOnce("Delete this Mitos?", "Mitos wipes everything it holds: the index, the copies, the notes, the connection, the keys, the logs and every sign-in. Nothing in FileMaker changes. Then it shows the one command that removes the server itself.", "Wipe everything")) return;
+  const r = await dzPost("/api/reset", { items: RESET_ITEMS.map(([k]) => k) });
+  if (r.error) { $("dzMsg").textContent = dzSaid(r); return; }
+  $("settings").classList.remove("open");
+  $("destroyCmd").textContent = "fly apps destroy " + flyApp;
+  $("destroyNote").textContent = "";
+  $("destroyOverlay").classList.add("open");
+};
+$("destroyClose").onclick = () => { $("destroyOverlay").classList.remove("open"); location.href = "/signin"; };
+$("destroyCopy").onclick = async () => {
+  const txt = $("destroyCmd").textContent;
+  let ok = false;
+  try { await navigator.clipboard.writeText(txt); ok = true; } catch {}
+  if (!ok) {
+    // A web viewer may refuse the clipboard API: select the text and copy.
+    try { const rg = document.createRange(); rg.selectNodeContents($("destroyCmd")); const sl = getSelection(); sl.removeAllRanges(); sl.addRange(rg); ok = document.execCommand("copy"); } catch {}
+  }
+  $("destroyNote").textContent = ok ? "Copied." : "Copy did not work here. Select the command and copy it by hand.";
+};

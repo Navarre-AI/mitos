@@ -10,7 +10,7 @@ import path from "path";
 import os from "os";
 import { spawn } from "child_process";
 import { fileURLToPath } from "url";
-import { fetchAllRows, fetchCounts } from "./fm.js";
+import { fetchAllRows, fetchCounts, fetchRowsByKeys } from "./fm.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
@@ -145,7 +145,7 @@ function dropPull(name) {
   for (const f of [checkpointFor(name), pageFileFor(name)]) { try { fs.unlinkSync(f); } catch {} }
 }
 
-async function syncTable(table, { onProgress, onNote, onResumed, watermark, select, expected = null, label = null, shouldStop = () => false } = {}) {
+async function syncTable(table, { onProgress, onNote, onResumed, onCheck, watermark, select, expected = null, label = null, idField = null, shouldStop = () => false, lastRemote = null, deletionsPending = false } = {}) {
   // `select` is the field list this table's config actually needs. Narrowing
   // it is the difference between a pull that finishes and one that times out:
   // the server evaluates only the fields we ask for, and unstored calculations
@@ -202,6 +202,7 @@ async function syncTable(table, { onProgress, onNote, onResumed, watermark, sele
 
   let count = 0;          // rows written to the page file so far
   let maxMod = wm || "";  // the newest modification stamp seen, per page
+  let newestSeen = "";    // the newest stamp in THIS pull's rows (for the watermark log line)
   let fd = null;
   if (ckpt) {
     count = Number(ckpt.rows) || 0;
@@ -219,7 +220,7 @@ async function syncTable(table, { onProgress, onNote, onResumed, watermark, sele
     const body = page.map((r) => JSON.stringify(r)).join(",");
     fs.writeSync(fd, (count ? "," : "") + body);
     count += page.length;
-    if (modField) for (const r of page) if (r[modField] && r[modField] > maxMod) maxMod = r[modField];
+    if (modField) for (const r of page) if (r[modField]) { if (r[modField] > maxMod) maxMod = r[modField]; if (r[modField] > newestSeen) newestSeen = r[modField]; }
     // The page is on disk before the checkpoint says so: a crash between the
     // two re-reads one page, never skips one.
     fs.writeFileSync(checkpointFor(name), JSON.stringify({ skip: skip + page.length, size, filter, watermark: wm, rows: count, maxMod, at: new Date().toISOString() }));
@@ -233,7 +234,8 @@ async function syncTable(table, { onProgress, onNote, onResumed, watermark, sele
         startSkip: ckpt ? Number(ckpt.skip) : 0,
         // No $orderby: FileMaker sorts the whole table for every $skip page,
         // which took a 68,777-row pull from a minute to over twenty (2026-09-09).
-        // A resume after a crash accepts the small chance of a shifted row.
+        // A shifted row on a busy table is the accepted cost; a duplicate it
+        // causes is healed before indexing (healDuplicates).
         pageSize: ckpt ? Number(ckpt.size) || undefined : undefined,
         filter: filter || undefined,
       });
@@ -249,9 +251,18 @@ async function syncTable(table, { onProgress, onNote, onResumed, watermark, sele
     fs.closeSync(fd);
   }
   const newWatermark = modField ? maxMod : null;
+  // Timezone check (investigation, 2026-11-20): one line per incremental pull,
+  // the watermark that went out as the filter and the newest modification
+  // value that came back, both exactly as FileMaker wrote them. If the two
+  // are in different frames (hours apart for a record just edited), that is it.
+  if (incremental) console.log(`[watermark] ${shown}: filter ${modField} ${wmOp} ${wm}; newest ${modField} seen in this pull: ${newestSeen || "(no rows changed)"}; saved watermark now ${newWatermark}`);
 
   let removed = 0;
+  let remoteCount = null;        // FileMaker's record count, as last seen in this sync
+  let pendingDeletions = false;  // the deletion check could not finish; the next sync does it
+  const countNow = async () => { const v = (await fetchCounts([table], () => {}, shouldStop))[name]; return Number.isFinite(v) ? v : null; };
   if (incremental) {
+    const localBefore = Number((await sql(`SELECT count(*) c FROM ${q(name)}`))[0]?.c ?? 0);
     if (count) {
       await sql(
         `CREATE TEMP TABLE _delta AS SELECT * FROM read_json('${esc(file)}', columns={${struct}}, format='array', maximum_object_size=16777216);` +
@@ -263,26 +274,60 @@ async function syncTable(table, { onProgress, onNote, onResumed, watermark, sele
     // DELETIONS. An incremental pull only sees rows that changed; a record
     // deleted in FileMaker never comes back in it, so its copy (and its index
     // row) would live on. One $count per sync tells whether anything is
-    // missing; only then are the primary keys pulled (a narrow, fast read)
-    // and the copies whose key is gone removed.
+    // missing: FileMaker's count is lower than its last count plus the rows
+    // this sync added (the count in the local copy is no yardstick: a healed
+    // duplicate makes it smaller than FileMaker's for good). Only then are
+    // the primary keys pulled (a narrow, fast read) and the copies whose key
+    // is gone removed.
     try {
-      const remote = (await fetchCounts([table], () => {}, shouldStop))[name];
       const local = Number((await sql(`SELECT count(*) c FROM ${q(name)}`))[0]?.c ?? 0);
-      if (Number.isFinite(remote) && remote < local) {
-        onNote && onNote(`${local - remote} record(s) were deleted in FileMaker since the last sync; checking which`);
-        const keys = await fetchAllRows(table.occurrences[0], [pk], { db: table.db, select: [pk], shouldStop, onNote });
-        const kfile = path.join(TMP_DIR, `${name}.keys.json`);
-        fs.writeFileSync(kfile, JSON.stringify(keys.map((r) => ({ k: r[pk] }))));
-        const before = local;
-        await sql(
-          `DELETE FROM ${q(name)} WHERE ${q(pk)} NOT IN (SELECT k FROM read_json('${esc(kfile)}', columns={k: '${ddlType(pk)}'}, format='array'))`,
-          { allowWrite: true }
-        );
-        fs.unlinkSync(kfile);
-        removed = before - Number((await sql(`SELECT count(*) c FROM ${q(name)}`))[0]?.c ?? 0);
+      const added = Math.max(0, local - localBefore);
+      const remote = await countNow();
+      remoteCount = remote;
+      const lower = remote !== null && (lastRemote !== null ? remote < lastRemote + added : remote < local);
+      if (remote !== null && (lower || deletionsPending)) {
+        onNote && onNote(lower ? `${Math.max(1, (lastRemote !== null ? lastRemote + added : local) - remote)} record(s) were deleted in FileMaker since the last sync; checking which` : "checking for records deleted in FileMaker since the last sync");
+        const pullKeys = async () => {
+          const rows = await fetchAllRows(table.occurrences[0], [pk], { db: table.db, select: [pk], shouldStop, onNote,
+            onProgress: (n) => onCheck && onCheck(n, remote) });
+          return rows.map((r) => r[pk]).filter((k) => k !== null && k !== undefined);
+        };
+        // Unordered paging can skip a key or read one twice when a record is
+        // added or deleted during the pull, and a skipped key would be
+        // deleted from the copy as if FileMaker had lost it. So delete only
+        // when a recount agrees: the number of DIFFERENT keys read equals
+        // FileMaker's count. A key that really is doubled in FileMaker can
+        // never satisfy that; it is accepted when a second read finds the
+        // same count and the same keys (a shifted page would not repeat).
+        let keys = await pullKeys();
+        let distinct = new Set(keys.map(String));
+        const after = await countNow();
+        let ok = after !== null && distinct.size === after;
+        if (!ok && after !== null && keys.length === after) {
+          const keys2 = await pullKeys();
+          const d2 = new Set(keys2.map(String));
+          const third = await countNow();
+          ok = third === after && keys2.length === after && d2.size === distinct.size && [...d2].every((k) => distinct.has(k));
+        }
+        if (after !== null) remoteCount = after;
+        if (!ok) {
+          pendingDeletions = true;
+          onNote && onNote(`${shown}: FileMaker changed during the check; deletions will be checked next sync.`);
+        } else {
+          const kfile = path.join(TMP_DIR, `${name}.keys.json`);
+          try {
+            fs.writeFileSync(kfile, JSON.stringify(keys.map((k) => ({ k }))));
+            await sql(
+              `DELETE FROM ${q(name)} WHERE ${q(pk)} NOT IN (SELECT k FROM read_json('${esc(kfile)}', columns={k: '${ddlType(pk)}'}, format='array'))`,
+              { allowWrite: true }
+            );
+          } finally { try { fs.unlinkSync(kfile); } catch {} }
+          removed = local - Number((await sql(`SELECT count(*) c FROM ${q(name)}`))[0]?.c ?? 0);
+        }
       }
     } catch (e) {
       if (e && e.cancelled) throw e;
+      pendingDeletions = true;
       onNote && onNote(`could not check for deleted records: ${String(e.message || e).slice(0, 120)}`);
     }
   } else {
@@ -290,10 +335,14 @@ async function syncTable(table, { onProgress, onNote, onResumed, watermark, sele
       ? `CREATE OR REPLACE TABLE ${q(name)} AS SELECT * FROM read_json('${esc(file)}', columns={${struct}}, format='array', maximum_object_size=16777216);`
       : `CREATE OR REPLACE TABLE ${q(name)} (${names.map((n) => `${q(n)} ${ddlType(n)}`).join(", ")});`;
     await sql(load, { allowWrite: true });
+    try { remoteCount = await countNow(); } catch (e) { if (e && e.cancelled) throw e; }
   }
   // The rows are in DuckDB: the page file and the checkpoint have done
   // their work, and a big table's file is not left on a small disk.
   dropPull(name);
+  // DUPLICATE KEYS. A key that is not unique in FileMaker must never fail a
+  // sync: re-read those ids, keep the newer row of what is still doubled.
+  const dup = await healDuplicates(table, name, { idField: idField || pk, modField, names, struct, ddlType, shown, onNote, shouldStop });
   const total = (await sql(`SELECT count(*) c FROM ${q(name)}`))[0]?.c ?? count;
   // The method in words, for the log line: "over OData, 9 fields by
   // $select, 1,000 a page" or "over OData, whole rows (the field list was
@@ -303,7 +352,78 @@ async function syncTable(table, { onProgress, onNote, onResumed, watermark, sele
     ? `over OData, ${pullStats.wholeRows ? "whole rows (the field list was refused)" : `${pullStats.fields} fields by $select`}, ${Number(pullStats.pageSize).toLocaleString()} a page`
     : "over OData";
   return { name, db: table.db, rows: total, changed: count, removed, mode: incremental ? "incremental" : "full", watermark: newWatermark, columns: names,
-    method, since: incremental ? wm : null, resumedFrom };
+    method, since: incremental ? wm : null, resumedFrom,
+    duplicates: dup.duplicates, duplicatesTotal: dup.total, healed: dup.healed,
+    remoteCount, ...(pendingDeletions ? { deletionsPending: true } : {}) };
+}
+
+// Primary keys that appear more than once in the local copy of a table.
+// The re-read asks FileMaker for just those ids and swaps its answer in, so a
+// copy heals once the customer fixes the data. Whatever FileMaker still has
+// twice keeps the newer row (the table's modification field, else the last
+// one read). Throws only for a cancel, or for a key that is not unique at all (see below). A re-read that fails falls back to the local rule.
+// Returns { duplicates: [{id, count}] (still doubled, at most 100), total, healed }.
+async function healDuplicates(table, name, { idField, modField, names, struct, ddlType, shown, onNote, shouldStop = () => false }) {
+  const none = { duplicates: [], total: 0, healed: 0 };
+  if (!idField || !names.includes(idField)) return none;
+  const doubled = () => sql(`SELECT ${q(idField)} AS id, count(*) AS n FROM ${q(name)} WHERE ${q(idField)} IS NOT NULL GROUP BY 1 HAVING count(*) > 1 ORDER BY 1`);
+  let dups;
+  try { dups = await doubled(); } catch { return none; }
+  if (!dups.length) return none;
+  // A key that repeats this much is not a key (a status, a category): healing
+  // would collapse the table to one row per value. Stop this table, change
+  // nothing, and say which field to replace. "This much": more than 100
+  // repeated ids, or more rows to remove than 1% of the table (a table of a few
+  // hundred rows may lose up to 5 before that counts).
+  const rowsHere = Number((await sql(`SELECT count(*) c FROM ${q(name)}`).catch(() => [{ c: 0 }]))[0]?.c || 0);
+  const extra = dups.reduce((a, d) => a + Number(d.n) - 1, 0);
+  if (dups.length > 100 || extra > Math.max(5, rowsHere * 0.01)) {
+    throw new Error(`${idField} is not unique in ${shown}. Pick another key in Settings, Tables.`);
+  }
+  const ids = dups.map((d) => d.id);
+  // Step a: ask FileMaker for those ids alone (at most 5,000; the rest meet
+  // the local rule).
+  const reread = ids.slice(0, 5000);
+  const files = [path.join(TMP_DIR, `${name}.fix-rows.json`), path.join(TMP_DIR, `${name}.fix-ids.json`)];
+  try {
+    const numericKey = (table.fields || []).find((f) => f.name === idField)?.type === "Decimal";
+    const fetched = await fetchRowsByKeys(table.occurrences[0], names, idField, reread, { db: table.db, select: names, numericKey, shouldStop });
+    fs.writeFileSync(files[0], JSON.stringify(fetched));
+    fs.writeFileSync(files[1], JSON.stringify(reread.map((k) => ({ k }))));
+    await sql(
+      (fetched.length ? `CREATE TEMP TABLE _fix AS SELECT * FROM read_json('${esc(files[0])}', columns={${struct}}, format='array', maximum_object_size=16777216);` : "") +
+      `DELETE FROM ${q(name)} WHERE ${q(idField)} IN (SELECT k FROM read_json('${esc(files[1])}', columns={k: '${ddlType(idField)}'}, format='array'));` +
+      (fetched.length ? `INSERT INTO ${q(name)} SELECT * FROM _fix;` : ""),
+      { allowWrite: true }
+    );
+  } catch (e) {
+    if (e && e.cancelled) throw e;
+    onNote && onNote(`${shown}: could not re-read the repeated IDs from FileMaker (${String(e.message || e).slice(0, 100)}); kept the newer row of each`);
+  } finally {
+    for (const f of files) { try { fs.unlinkSync(f); } catch {} }
+  }
+  // Step b: whatever is still doubled, keep the newer row (modification
+  // field, else the last one read).
+  let left;
+  try { left = await doubled(); } catch { left = dups; }
+  if (left.length) {
+    const order = modField ? `${q(modField)} DESC NULLS LAST, rowid DESC` : "rowid DESC";
+    try {
+      await sql(
+        `DELETE FROM ${q(name)} WHERE rowid IN (SELECT rid FROM (SELECT rowid AS rid, row_number() OVER (PARTITION BY ${q(idField)} ORDER BY ${order}) AS rn FROM ${q(name)} ` +
+        `WHERE ${q(idField)} IN (SELECT ${q(idField)} FROM ${q(name)} GROUP BY 1 HAVING count(*) > 1)) WHERE rn > 1)`,
+        { allowWrite: true }
+      );
+    } catch (e) { onNote && onNote(`${shown}: could not remove the repeated rows (${String(e.message || e).slice(0, 100)})`); }
+  }
+  const duplicates = left.map((d) => ({ id: d.id, count: Number(d.n) }));
+  const healed = dups.length - left.length;
+  if (onNote) {
+    for (const d of duplicates.slice(0, 5)) onNote(`${shown}: ${d.count} records share ID ${d.id}. Kept the newer one. Fix it in FileMaker.`);
+    if (duplicates.length > 5) onNote(`${shown}: ${duplicates.length - 5} more IDs are shared by several records. Kept the newer one of each. Fix it in FileMaker.`);
+    if (healed > 0) onNote(`${shown}: ${healed} repeated ID${healed === 1 ? "" : "s"} in the local copy ${healed === 1 ? "is" : "are"} fixed now (FileMaker has one record for ${healed === 1 ? "it" : "each"}).`);
+  }
+  return { duplicates: duplicates.slice(0, 100), total: duplicates.length, healed };
 }
 
 // The per-record beacon's write: a few rows replaced in the local copy by
@@ -331,7 +451,16 @@ export async function deleteShadowRows(name, pk, keys) {
   return keys.length;
 }
 
-export async function syncTables(tables, names, log = () => {}, onEvent = () => {}, { selects = {}, labels = {}, expected = {}, shouldStop = () => false } = {}) {
+function writeManifest(results) {
+  const byName = Object.fromEntries((storeManifest().tables || []).map((t) => [t.name, t]));
+  for (const r of results) byName[r.name] = r;
+  const merged = Object.values(byName);
+  const out = { db: DB_PATH, syncedAt: new Date().toISOString(), host: os.hostname(), tables: merged, totalRows: merged.reduce((a, b) => a + b.rows, 0) };
+  fs.writeFileSync(path.join(DATA_DIR, "store-manifest.json"), JSON.stringify(out, null, 2));
+  return out;
+}
+
+export async function syncTables(tables, names, log = () => {}, onEvent = () => {}, { selects = {}, labels = {}, expected = {}, pks = {}, shouldStop = () => false } = {}) {
   // Sync in the ORDER GIVEN (the caller passes display order), not schema
   // order, so the screen and the work agree about what happens next.
   const wanted = new Map(tables.map((t) => [t.name, t]));
@@ -351,12 +480,20 @@ export async function syncTables(tables, names, log = () => {}, onEvent = () => 
     try {
       r = await syncTable(t, {
       watermark: prior[t.name]?.watermark || null,
+      lastRemote: Number.isFinite(Number(prior[t.name]?.remoteCount)) && prior[t.name]?.remoteCount !== null ? Number(prior[t.name].remoteCount) : null,
+      deletionsPending: Boolean(prior[t.name]?.deletionsPending),
       select: selects[t.name],
       expected: expected[t.name] ?? null,
       label: labels[t.name] || null,
+      idField: pks[t.name] || null,
       shouldStop,
       onNote: (note) => { log(`  ${note}`); onEvent({ type: "note", name: t.name, note }); },
       onProgress: (n) => { log(`  ${t.name}: ${n} rows`); onEvent({ type: "pull-rows", name: t.name, rows: n }); },
+      onCheck: (n, of) => {
+        const text = `checking which records were deleted: ${n.toLocaleString()} of ${Number(of).toLocaleString()}`;
+        log(`  ${t.name}: ${text}`);
+        onEvent({ type: "pull-rows", name: t.name, rows: n, phase: "deletions", of: Number(of), text });
+      },
       onResumed: (fromRow) => { log(`  ${t.name}: continuing from row ${fromRow}`); onEvent({ type: "pull-resumed", name: t.name, fromRow }); },
       });
     } catch (e) {
@@ -369,15 +506,15 @@ export async function syncTables(tables, names, log = () => {}, onEvent = () => 
     }
     log(`  ${t.name}: ${r.mode} ${r.method}${r.since ? ` since ${r.since}` : ""}${r.resumedFrom ? ` resumed at row ${r.resumedFrom}` : ""} / ${r.changed} changed / ${r.removed || 0} removed / ${r.rows} total`);
     onEvent({ type: "pull-done", name: t.name, rows: r.rows, changed: r.changed, removed: r.removed || 0, mode: r.mode, ms: Date.now() - started,
-      method: r.method, since: r.since || null, resumedFrom: r.resumedFrom || null });
+      method: r.method, since: r.since || null, resumedFrom: r.resumedFrom || null,
+      duplicates: r.duplicates || [], duplicatesTotal: r.duplicatesTotal || 0 });
     results.push(r);
+    // The manifest is written after EACH finished table: a later table that fails
+    // must not take the earlier tables' watermarks with it (they would all be
+    // read in full again).
+    writeManifest(results);
   }
-  const manifest = storeManifest();
-  const byName = Object.fromEntries((manifest.tables || []).map((t) => [t.name, t]));
-  for (const r of results) byName[r.name] = r;
-  const merged = Object.values(byName);
-  const out = { db: DB_PATH, syncedAt: new Date().toISOString(), host: os.hostname(), tables: merged, totalRows: merged.reduce((a, b) => a + b.rows, 0) };
-  fs.writeFileSync(path.join(DATA_DIR, "store-manifest.json"), JSON.stringify(out, null, 2));
+  const out = writeManifest(results);
   // This run's tables alone, for the sync summary (the file holds every table).
   return { ...out, pulled: results };
 }
@@ -385,6 +522,150 @@ export async function syncTables(tables, names, log = () => {}, onEvent = () => 
 export function storeManifest() {
   try { return JSON.parse(fs.readFileSync(path.join(DATA_DIR, "store-manifest.json"), "utf8")); }
   catch { return { syncedAt: null, tables: [], totalRows: 0 }; }
+}
+
+// --- Dropping and wiping (Settings, Danger zone) -------------------------------
+// FileMaker is never touched by any of these.
+
+// Pure file work, run when no DuckDB process is: it waits its turn in the same
+// queue as every query. Never call sql() inside it.
+function exclusive(fn) {
+  const result = dbQueue.then(fn, fn);
+  dbQueue = result.then(() => {}, () => {});
+  return result;
+}
+const unlinkAll = (files) => { for (const f of files) { try { fs.unlinkSync(f); } catch {} } };
+const readJsonFile = (f) => { try { return JSON.parse(fs.readFileSync(f, "utf8")); } catch { return null; } };
+
+// The local copies of these tables, their rows in the search index and in the
+// vector file, their pull checkpoints and their entries in both manifests.
+// Returns the names that were dropped.
+export async function dropTableCopies(names) {
+  const list = [...new Set((names || []).map(String).filter((n) => n && n !== "mitos_index" && n !== "mitos_vec"))];
+  if (!list.length) return [];
+  const inList = list.map((n) => `'${esc(n)}'`).join(",");
+  const dbExists = fs.existsSync(DB_PATH);
+  if (dbExists) {
+    for (const n of list) await sql(`DROP TABLE IF EXISTS ${q(n)}`, { allowWrite: true });
+    await sql(`DELETE FROM mitos_index WHERE src_table IN (${inList})`, { allowWrite: true }).catch(() => {}); // no index yet is fine
+  }
+  if (fs.existsSync(VEC_PATH)) await vsql(`DELETE FROM mitos_vec WHERE src_table IN (${inList})`, { allowWrite: true }).catch(() => {});
+  for (const n of list) { dropPull(n); unlinkAll([path.join(TMP_DIR, `${n}.keys.json`)]); }
+  const sm = readJsonFile(path.join(DATA_DIR, "store-manifest.json"));
+  if (sm && Array.isArray(sm.tables)) {
+    sm.tables = sm.tables.filter((t) => !list.includes(t.name));
+    sm.totalRows = sm.tables.reduce((a, t) => a + Number(t.rows || 0), 0);
+    fs.writeFileSync(path.join(DATA_DIR, "store-manifest.json"), JSON.stringify(sm, null, 2));
+  }
+  const im = readJsonFile(path.join(DATA_DIR, "index-manifest.json"));
+  if (im) {
+    if (Array.isArray(im.tables)) im.tables = im.tables.filter((t) => !list.includes(t.table));
+    if (im.index && Array.isArray(im.index.tables)) {
+      im.index.tables = im.index.tables.filter((t) => !list.includes(t.src_table));
+      im.index.totalRows = im.index.tables.reduce((a, t) => a + Number(t.rows || 0), 0);
+    }
+    fs.writeFileSync(path.join(DATA_DIR, "index-manifest.json"), JSON.stringify(im, null, 2));
+  }
+  return list;
+}
+
+// Every table copy the sync made, and its manifest and checkpoints. The
+// search index stays (wipeIndex is its own thing).
+export async function wipeCopies() {
+  if (fs.existsSync(DB_PATH)) {
+    const tables = await sql(`SELECT table_name FROM information_schema.tables WHERE table_schema='main' AND table_type='BASE TABLE' AND table_name NOT IN ('mitos_index','mitos_vec')`).catch(() => []);
+    for (const t of tables) await sql(`DROP TABLE IF EXISTS ${q(t.table_name)}`, { allowWrite: true });
+  }
+  await exclusive(() => {
+    unlinkAll([path.join(DATA_DIR, "store-manifest.json")]);
+    try { for (const f of fs.readdirSync(TMP_DIR)) unlinkAll([path.join(TMP_DIR, f)]); } catch {}
+  });
+}
+
+// The search index, its full-text index and the vectors, and the manifest
+// that says when it was built. The table copies stay.
+export async function wipeIndex() {
+  if (fs.existsSync(DB_PATH)) {
+    await sql(`DROP SCHEMA IF EXISTS fts_main_mitos_index CASCADE`, { allowWrite: true, safe: false }).catch(() => {});
+    await sql(`DROP TABLE IF EXISTS mitos_index`, { allowWrite: true });
+  }
+  await exclusive(() => unlinkAll([VEC_PATH, VEC_PATH + ".wal", path.join(DATA_DIR, "index-manifest.json")]));
+  forgetTextIndex();
+}
+
+// The two together leave nothing in the database file: delete it, so the
+// disk comes back (DuckDB never shrinks a file by dropping tables).
+export async function wipeAllLocalData() {
+  await exclusive(() => {
+    unlinkAll([DB_PATH, DB_PATH + ".wal", VEC_PATH, VEC_PATH + ".wal",
+      path.join(DATA_DIR, "store-manifest.json"), path.join(DATA_DIR, "index-manifest.json")]);
+    try { for (const f of fs.readdirSync(TMP_DIR)) unlinkAll([path.join(TMP_DIR, f)]); } catch {}
+  });
+  forgetTextIndex();
+}
+
+// The AI search notes of every table, and the vectors of the tables that had
+// notes (those vectors were made with the notes in them). Vectors of a table
+// without notes are left alone. Returns how many rows had notes.
+export async function wipeNotes() {
+  if (!fs.existsSync(DB_PATH)) return 0;
+  const had = await sql(`SELECT src_table, count(*) c FROM mitos_index WHERE enrich_key IS NOT NULL GROUP BY 1`).catch(() => []);
+  const n = had.reduce((a, r) => a + Number(r.c || 0), 0);
+  if (n) {
+    await sql(`UPDATE mitos_index SET enrich_text = NULL, enrich_norm = NULL, enrich_key = NULL WHERE enrich_key IS NOT NULL`, { allowWrite: true });
+    if (fs.existsSync(VEC_PATH)) {
+      const list = had.map((r) => `'${esc(r.src_table)}'`).join(",");
+      await vsql(`DELETE FROM mitos_vec WHERE src_table IN (${list})`, { allowWrite: true }).catch(() => {});
+      await compactVectorFile();
+    }
+  }
+  return n;
+}
+
+// --- Vector bookkeeping (semantic search switches) --------------------------------------
+// Vectors take room on the Fly volume, so turning semantic search off, or off
+// for a table, deletes them. DuckDB never shrinks a file by deleting rows: the
+// last vector gone removes the file, otherwise the rest is copied into a new
+// file that replaces it.
+export async function vectorTotals() {
+  const bytes = vectorFileSize();
+  if (!bytes) return { vectors: 0, bytes: 0 };
+  const r = await vsql(`SELECT count(*) c FROM mitos_vec`).catch(() => [{ c: 0 }]);
+  return { vectors: Number(r[0]?.c || 0), bytes };
+}
+export async function compactVectorFile() {
+  if (!fs.existsSync(VEC_PATH)) return;
+  const left = Number((await vsql(`SELECT count(*) c FROM mitos_vec`).catch(() => [{ c: 0 }]))[0]?.c || 0);
+  if (!left) { await exclusive(() => unlinkAll([VEC_PATH, VEC_PATH + ".wal"])); return; }
+  const tmp = VEC_PATH + ".compact";
+  try {
+    await exclusive(() => unlinkAll([tmp, tmp + ".wal"]));
+    await vsql(`ATTACH '${esc(tmp)}' AS c; CREATE TABLE c.mitos_vec AS SELECT * FROM mitos_vec; DETACH c;`, { allowWrite: true });
+    await exclusive(() => { unlinkAll([VEC_PATH + ".wal"]); fs.renameSync(tmp, VEC_PATH); });
+  } catch { await exclusive(() => unlinkAll([tmp, tmp + ".wal"])); }
+}
+// Switching semantic search off: every vector, and the file. { deleted, bytesFreed }
+export async function deleteAllVectors() {
+  const { vectors, bytes } = await vectorTotals();
+  await exclusive(() => unlinkAll([VEC_PATH, VEC_PATH + ".wal"]));
+  return { deleted: vectors, bytesFreed: bytes };
+}
+// A table switched off: its vectors. { deleted, bytesFreed }
+export async function deleteTableVectors(names) {
+  const list = [...new Set((names || []).map(String).filter(Boolean))];
+  if (!list.length || !fs.existsSync(VEC_PATH)) return { deleted: 0, bytesFreed: 0 };
+  const before = vectorFileSize();
+  const inList = list.map((n) => `'${esc(n)}'`).join(",");
+  const n = Number((await vsql(`SELECT count(*) c FROM mitos_vec WHERE src_table IN (${inList})`).catch(() => [{ c: 0 }]))[0]?.c || 0);
+  if (n) { await vsql(`DELETE FROM mitos_vec WHERE src_table IN (${inList})`, { allowWrite: true }); await compactVectorFile(); }
+  return { deleted: n, bytesFreed: Math.max(0, before - vectorFileSize()) };
+}
+
+// Rows of the index and the local copies, cleared before a from-scratch rebuild.
+export async function clearIndexRows() {
+  if (!fs.existsSync(DB_PATH)) return;
+  await sql(`DELETE FROM mitos_index`, { allowWrite: true }).catch(() => {});
+  if (fs.existsSync(VEC_PATH)) await vsql(`DELETE FROM mitos_vec`, { allowWrite: true }).catch(() => {});
 }
 
 // --- Bundled sample data ------------------------------------------------------
@@ -602,7 +883,7 @@ const NEEDS_VEC = (vecKey, tables) =>
   (fs.existsSync(VEC_PATH)
     ? `FROM mitos_index i LEFT JOIN vdb.mitos_vec v ON v.src_table = i.src_table AND v.record_id = i.record_id WHERE v.vec_key IS DISTINCT FROM '${esc(vecKey)}'`
     : `FROM mitos_index i WHERE true`) +
-  (tables && tables.length ? ` AND i.src_table IN (${tables.map((n) => `'${esc(n)}'`).join(",")})` : "");
+  (tables ? (tables.length ? ` AND i.src_table IN (${tables.map((n) => `'${esc(n)}'`).join(",")})` : " AND false") : "");
 export async function rowsNeedingVectors(vecKey, limit, tables) {
   return sql(
     (fs.existsSync(VEC_PATH) ? attachVec() : "") +
@@ -611,8 +892,8 @@ export async function rowsNeedingVectors(vecKey, limit, tables) {
     { allowWrite: true }
   );
 }
-export async function countNeedingVectors(vecKey) {
-  const r = await sql((fs.existsSync(VEC_PATH) ? attachVec() : "") + `SELECT count(*) c ${NEEDS_VEC(vecKey)}`, { allowWrite: true }).catch(() => [{ c: 0 }]);
+export async function countNeedingVectors(vecKey, tables) {
+  const r = await sql((fs.existsSync(VEC_PATH) ? attachVec() : "") + `SELECT count(*) c ${NEEDS_VEC(vecKey, tables)}`, { allowWrite: true }).catch(() => [{ c: 0 }]);
   return Number(r[0]?.c || 0);
 }
 // rows: [{ src_table, record_id, vec: number[] }]. Delete then insert, in
@@ -643,10 +924,10 @@ export async function pruneVectors() {
 // What the stages have covered, for the settings screen and the log.
 // What a paid pass would cost: rows without a current vector (or notes)
 // and their average text size, per table.
-export async function passEstimate(vecKey, enrichKeys = {}) {
+export async function passEstimate(vecKey, enrichKeys = {}, tables = null) {
   const need = await sql(
     (fs.existsSync(VEC_PATH) ? attachVec() : "") +
-    `SELECT i.src_table, count(*) AS rows, avg(length(i.source_text) + coalesce(length(i.enrich_text), 0)) AS chars ${NEEDS_VEC(vecKey)} GROUP BY i.src_table`,
+    `SELECT i.src_table, count(*) AS rows, avg(length(i.source_text) + coalesce(length(i.enrich_text), 0)) AS chars ${NEEDS_VEC(vecKey, tables)} GROUP BY i.src_table`,
     { allowWrite: true }
   ).catch(() => []);
   const enrich = [];
@@ -657,16 +938,21 @@ export async function passEstimate(vecKey, enrichKeys = {}) {
   return { embed: need.map((r) => ({ table: r.src_table, rows: Number(r.rows), chars: Number(r.chars || 0) })), enrich };
 }
 
-export async function stageStats(vecKey) {
+// Per table: rows, rows with notes, rows with a vector from the current model
+// (`embedded`), and every vector the table holds under any model (`vectors`,
+// with `vectorBytes` estimated at dims * 4 bytes and some overhead per row).
+export async function stageStats(vecKey, dims = 256) {
   const rows = await sql(
     `SELECT src_table, count(*) AS rows, count(*) FILTER (WHERE enrich_key IS NOT NULL) AS enriched
      FROM mitos_index GROUP BY src_table ORDER BY src_table`
   ).catch(() => []);
-  const vec = await vsql(`SELECT src_table, count(*) AS embedded FROM mitos_vec WHERE vec_key = '${esc(vecKey || "")}' GROUP BY src_table`).catch(() => []);
+  const vec = await vsql(`SELECT src_table, count(*) AS vectors, count(*) FILTER (WHERE vec_key = '${esc(vecKey || "")}') AS embedded FROM mitos_vec GROUP BY src_table`).catch(() => []);
   const embeddedBy = Object.fromEntries(vec.map((r) => [r.src_table, Number(r.embedded)]));
-  const out = rows.map((r) => ({ ...r, embedded: Math.min(Number(r.rows), embeddedBy[r.src_table] || 0) }));
+  const vectorsBy = Object.fromEntries(vec.map((r) => [r.src_table, Number(r.vectors)]));
+  const per = Number(dims) * 4 + 64;
+  const out = rows.map((r) => ({ ...r, embedded: Math.min(Number(r.rows), embeddedBy[r.src_table] || 0), vectors: vectorsBy[r.src_table] || 0, vectorBytes: (vectorsBy[r.src_table] || 0) * per }));
   const sum = (k) => out.reduce((a, r) => a + Number(r[k] || 0), 0);
-  return { tables: out, totalRows: sum("rows"), enriched: sum("enriched"), embedded: sum("embedded"), vectorFileBytes: vectorFileSize() };
+  return { tables: out, totalRows: sum("rows"), enriched: sum("enriched"), embedded: sum("embedded"), vectors: sum("vectors"), vectorFileBytes: vectorFileSize() };
 }
 
 // Existing (record_id -> content_hash) map for one table, for the diff step.
@@ -679,20 +965,29 @@ export async function indexHashes(srcTable) {
 // through a temp JSON file: a table's worth of text is too big for a literal.
 export async function upsertIndexRows(srcTable, rows) {
   if (!rows.length) return 0;
-  const file = path.join(TMP_DIR, `index-${srcTable.replace(/[^\w.-]+/g, "_")}.json`);
-  fs.writeFileSync(file, JSON.stringify(rows));
-  const struct = Object.entries(INDEX_COLUMNS).map(([c, t]) => `${c}: '${t}'`).join(", ");
-  const cols = Object.keys(INDEX_COLUMNS).join(", ");
-  await sql(
-    `CREATE TEMP TABLE _idx AS SELECT * FROM read_json('${esc(file)}', columns={${struct}}, format='array', maximum_object_size=16777216);` +
-    `DELETE FROM mitos_index WHERE src_table='${esc(srcTable)}' AND record_id IN (SELECT record_id FROM _idx);` +
-    `INSERT INTO mitos_index (${cols}, indexed_at) SELECT ${cols}, now() FROM _idx;`,
-    { allowWrite: true }
-  );
-  // A changed row's vector was made from the old text: gone, rebuilt next.
-  await dropVectorsFromFile(srcTable, file, "record_id");
-  fs.unlinkSync(file);
-  return rows.length;
+  // One row per (src_table, record_id): a primary key that repeats in the
+  // local copy must never fail the insert. The last one in the batch wins
+  // (the sync already kept the newer one; this is the second line of defence).
+  const byId = new Map();
+  for (const r of rows) byId.set(`${r.src_table ?? srcTable}\u0000${r.record_id}`, r);
+  const unique = [...byId.values()];
+  const file = path.join(TMP_DIR, `index-${srcTable.replace(/[^\w.-]+/g, "_")}-${process.pid}-${Date.now()}.json`);
+  try {
+    fs.writeFileSync(file, JSON.stringify(unique));
+    const struct = Object.entries(INDEX_COLUMNS).map(([c, t]) => `${c}: '${t}'`).join(", ");
+    const cols = Object.keys(INDEX_COLUMNS).join(", ");
+    await sql(
+      `CREATE TEMP TABLE _idx AS SELECT * FROM read_json('${esc(file)}', columns={${struct}}, format='array', maximum_object_size=16777216);` +
+      `DELETE FROM mitos_index WHERE src_table='${esc(srcTable)}' AND record_id IN (SELECT record_id FROM _idx);` +
+      `INSERT INTO mitos_index (${cols}, indexed_at) SELECT ${cols}, now() FROM _idx;`,
+      { allowWrite: true }
+    );
+    // A changed row's vector was made from the old text: gone, rebuilt next.
+    await dropVectorsFromFile(srcTable, file, "record_id");
+  } finally {
+    try { fs.unlinkSync(file); } catch {}
+  }
+  return unique.length;
 }
 
 // Ids go through a temp JSON file: a table can lose tens of thousands of
@@ -705,6 +1000,8 @@ export async function deleteIndexRows(srcTable, recordIds) {
     `DELETE FROM mitos_index WHERE src_table='${esc(srcTable)}' AND record_id IN (SELECT record_id FROM read_json('${esc(file)}', columns={record_id: 'VARCHAR'}, format='array'))`,
     { allowWrite: true }
   );
+  // Their vectors go with them (the vector file is separate).
+  await dropVectorsFromFile(srcTable, file, "record_id");
   fs.unlinkSync(file);
   return recordIds.length;
 }

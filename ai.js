@@ -156,6 +156,120 @@ export async function ensureModelList() {
   if (!modelListCache() && configuredProviders().length) await refreshModelList();
 }
 
+// --- The public model list (navarre.ai/ai-models.json) -------------------------------
+// One list for all of Matt's apps: a daily job on navarre.ai keeps it current.
+// Each model has a job (reasoning, workhorse, cheap, embedding, rerank), a
+// price per million tokens, and a `recommended` flag. This list decides what
+// the menus show and what each stage defaults to; the providers' own live
+// lists (above) only say which ids a key can reach and cover a model the
+// public list does not name. Same loader as Pythia's: a copy on the volume,
+// refreshed at most every 12 hours, never waited on when a copy exists,
+// backed off after a failure. MITOS_MODEL_LIST_URL picks the file (a path or
+// file: URL works too); an empty value turns it off.
+const curatedUrl = () => process.env.MITOS_MODEL_LIST_URL ?? "https://navarre.ai/ai-models.json";
+const CURATED_PATH = path.join(DATA_DIR, "ai-models.json");
+const CURATED_EVERY_MS = 12 * 3600000;
+let curated = null; // { list, fetchedAt }
+let curatedFailAt = 0, curatedFails = 0, curatedBusy = null, curatedError = "";
+// The last refresh's failure, "" when it worked (the Refresh button says so).
+export const curatedStatus = () => ({ error: curatedError });
+export function loadCurated() {
+  if (!curatedUrl()) return null;
+  if (!curated) { try { curated = JSON.parse(fs.readFileSync(CURATED_PATH, "utf8")); } catch { /* none yet */ } }
+  return curated;
+}
+export function refreshCurated(force = false) {
+  const url = curatedUrl();
+  if (!url) return Promise.resolve(null);
+  if (curatedBusy) return curatedBusy;
+  const have = loadCurated();
+  if (!force) {
+    if (have && Date.now() - (Date.parse(have.fetchedAt || "") || 0) < CURATED_EVERY_MS) return Promise.resolve(have);
+    // Failed recently: wait before the next try (20 s, then 5 minutes after three).
+    if (Date.now() - curatedFailAt < (curatedFails > 3 ? 300000 : 20000)) return Promise.resolve(have);
+  }
+  curatedBusy = (async () => {
+    try {
+      let list;
+      if (/^file:/i.test(url) || url.startsWith("/")) list = JSON.parse(fs.readFileSync(url.replace(/^file:\/\//i, ""), "utf8"));
+      else {
+        const r = await fetch(url, { signal: AbortSignal.timeout(5000) });
+        if (!r.ok) throw new Error(`answered ${r.status}`);
+        list = await r.json();
+      }
+      if (!Array.isArray(list?.providers)) throw new Error("no providers in it");
+      curated = { list, fetchedAt: new Date().toISOString() };
+      curatedFails = 0; curatedError = "";
+      try { fs.writeFileSync(CURATED_PATH, JSON.stringify(curated, null, 2)); } catch { /* read-only fs ok */ }
+    } catch (e) {
+      curatedFailAt = Date.now(); curatedFails++; curatedError = String(e?.message || e).slice(0, 120);
+      console.log("[models] public model list not refreshed:", String(e?.message || e).slice(0, 80));
+    } finally { curatedBusy = null; }
+    return curated || have;
+  })();
+  return curatedBusy;
+}
+// Before an answer that shows the list: a copy = no wait (a stale one
+// refreshes in the background); no copy = wait up to maxWaitMs for the fetch.
+export async function curatedReady(maxWaitMs = 2000) {
+  const had = loadCurated();
+  const p = refreshCurated();
+  if (had) return had;
+  let timer;
+  await Promise.race([p.catch(() => null), new Promise((r) => { timer = setTimeout(r, maxWaitMs); })]);
+  clearTimeout(timer);
+  return loadCurated();
+}
+// Saving a key: the public list (if stale) and the provider lists, now.
+export async function refreshAllModels() {
+  await Promise.all([refreshCurated(false).catch(() => null), refreshModelList().catch(() => null)]);
+}
+
+// The public list, flattened. kind: "embedding" for the embedding job, else
+// "chat". Models of the rerank job are left out: Mitos has no reranker client
+// (its "AI best match" is a chat model), so nothing could use them.
+export function curatedModels() {
+  const list = loadCurated()?.list;
+  const out = [];
+  for (const p of list?.providers || []) {
+    if (!PROVIDERS[p?.id]) continue;
+    for (const m of p.models || []) {
+      if (!m?.id || m.job === "rerank") continue;
+      out.push({ id: m.id, name: m.name || m.id, provider: p.id, job: m.job || "workhorse", kind: m.job === "embedding" ? "embedding" : "chat",
+        in: Number.isFinite(Number(m.in)) && m.in !== null ? Number(m.in) : null, out: Number.isFinite(Number(m.out)) && m.out !== null ? Number(m.out) : null,
+        note: m.note || "", recommended: Boolean(m.recommended), ...(m.added ? { added: m.added } : {}) });
+    }
+  }
+  return out;
+}
+// A listed id may be written with or without its dated snapshot.
+const sameModel = (a, b) => a === b || (a.startsWith(b + "-") && /^(\d{8}|\d{4}-\d{2}-\d{2})$/.test(a.slice(b.length + 1))) || (b.startsWith(a + "-") && /^(\d{8}|\d{4}-\d{2}-\d{2})$/.test(b.slice(a.length + 1)));
+export function curatedFind(model) {
+  const { provider, id } = splitModel(model);
+  return curatedModels().find((m) => m.id === id && (!provider || m.provider === provider)) || curatedModels().find((m) => sameModel(m.id, id) && (!provider || m.provider === provider)) || null;
+}
+
+// What GET /api/ai/models serves: the public list with `usable` (the provider
+// has a key). A provider with a key whose public section names no embedding
+// model gets the ones its own list shows (OpenAI's embedding models are not on
+// the public list yet), marked `live`. With no public list at all, the live
+// list stands in, with no job.
+export function modelsView() {
+  const cur = loadCurated();
+  const keyed = (p) => Boolean(keyForProvider(p).key);
+  const models = curatedModels().map((m) => ({ ...m, usable: keyed(m.provider) }));
+  const live = liveModels();
+  if (!cur) {
+    for (const m of live) models.push({ id: m.id, name: m.name || m.id, provider: m.provider, job: null, kind: m.kind, in: null, out: null, note: "", recommended: false, usable: keyed(m.provider), live: true });
+  } else {
+    for (const p of Object.keys(PROVIDERS)) {
+      if (!keyed(p) || models.some((m) => m.provider === p && m.kind === "embedding")) continue;
+      for (const m of live.filter((x) => x.provider === p && x.kind === "embedding")) models.push({ id: m.id, name: m.name || m.id, provider: p, job: "embedding", kind: "embedding", in: null, out: null, note: "", recommended: false, usable: true, live: true });
+    }
+  }
+  return { updated: cur?.list?.updated || null, source: cur ? (cur.list.source || curatedUrl()) : null, fetchedAt: cur?.fetchedAt || null, jobs: cur?.list?.jobs || {}, models, recommended: RECOMMENDED_JOB };
+}
+
 // An id may name its provider outright, "voyage:<model id>": explicit
 // configuration beats every lookup. Needed for a provider that publishes no
 // list (Voyage) or an id two providers both list.
@@ -179,6 +293,9 @@ export function providerOf(model, kind = "") {
   const listed = liveModels().filter((m) => m.id === id);
   const hit = listed.find((m) => keyForProvider(m.provider).key) || listed[0];
   if (hit) return hit.provider;
+  const pub = curatedModels().filter((m) => m.id === id);
+  const pubHit = pub.find((m) => keyForProvider(m.provider).key) || pub[0];
+  if (pubHit) return pubHit.provider;
   const can = configuredProviders().filter((p) => !kind || (kind === "embedding" ? PROVIDERS[p].embed : PROVIDERS[p].chat));
   return can.length === 1 ? can[0] : "";
 }
@@ -188,24 +305,44 @@ export function modelKind(model) {
   if (provider && !PROVIDERS[provider].chat) return "embedding";
   if (provider && !PROVIDERS[provider].embed) return "chat";
   const listed = liveModels().filter((m) => m.id === id && (!provider || m.provider === provider));
-  return listed[0]?.kind || "";
+  return listed[0]?.kind || curatedFind(model)?.kind || "";
 }
 export const isEmbeddingModel = (m) => modelKind(m) === "embedding";
 
-// With nothing configured: the first model of that kind on the live list
-// from a provider with a key (newest first, where the provider dates them).
-// The pick is shown wherever the choice is made ("default (id)"), never
-// hidden. "" when there is no list: then a model must be chosen.
-export function autoModel(kind = "chat", except = "") {
-  const m = liveModels().find((x) => x.kind === kind && x.id !== modelId(except) && keyForProvider(x.provider).key);
-  return m ? m.id : "";
+// --- Jobs ---------------------------------------------------------------------------
+// The public list says what each model is for (its job). Each stage has the
+// job it works best at (Matt, 2026-11-20): naming and the AI best match the
+// workhorse (the best match: "medium to low", so the cheap job is the next
+// step down), the reading and the notes the cheap job, semantic search an
+// embedding model. Nothing is read from a model's name.
+export const RECOMMENDED_JOB = { naming: "workhorse", enrich: "cheap", understand: "cheap", rerank: "workhorse", semantic: "embedding" };
+const JOB_DOWN = { reasoning: ["workhorse", "cheap"], workhorse: ["cheap"], cheap: [], embedding: [] };
+
+// The default model for a stage (or "naming"): the `recommended` model of the
+// stage's job from a provider with a key, else the first of that job with a
+// key, else the next job down. With no public list at all, the first model of
+// the right kind on the providers' own lists. "" when there is none: then a
+// model must be chosen. `except` skips one id.
+export function autoModel(stage, except = "") {
+  const job = RECOMMENDED_JOB[stage];
+  if (!job) return "";
+  const kind = stageKind(stage);
+  const skip = modelId(except);
+  const usable = curatedModels().filter((x) => x.id !== skip && keyForProvider(x.provider).key);
+  for (const j of [job, ...(JOB_DOWN[job] || [])]) {
+    const of = usable.filter((x) => x.job === j);
+    const m = of.find((x) => x.recommended) || of[0];
+    if (m) return m.id;
+  }
+  // Embedding models the public list lacks (OpenAI's) come from the live list.
+  return liveModels().find((x) => x.kind === kind && x.id !== skip && keyForProvider(x.provider).key)?.id || "";
 }
 
 // --- Models per role ---------------------------------------------------------------
 // Naming: config.ai.namingModel, else NAMING_MODEL from the environment,
 // else the live list's pick.
 const chosenNamingModel = () => cfg().namingModel || process.env.NAMING_MODEL || "";
-export const namingModel = () => chosenNamingModel() || autoModel("chat");
+export const namingModel = () => chosenNamingModel() || autoModel("naming");
 
 // Cosine floors differ by provider: OpenAI scores run low, Google and
 // Voyage run high. Used when the semantic stage has no floor set.
@@ -230,6 +367,12 @@ export const STAGE_DEFAULTS = {
   // sync; a full pass comes only from the Run button (the paid-pass gate).
   enrich: { on: false, model: "", prompt: "", maxRowsPerSync: 1000, concurrency: 4 },
   understand: { on: false, model: "", timeoutMs: 3500 },
+  // The plain best-match rule (search.js): marks one record when it is
+  // clearly the one meant. No model, no key. Switch it off and no record is
+  // ever marked, not even by the AI stage below.
+  best: { on: true },
+  // The AI best match: reorders the short list, and may name the best match
+  // when `best` is on. Its model is the one this stage holds.
   rerank: { on: false, model: "", timeoutMs: 4000, candidates: 15, oneThreshold: 0.85 },
 };
 // A plain sync embeds at most this many new or changed rows; more waits for
@@ -238,14 +381,17 @@ export const EMBED_CAP_PER_SYNC = 5000;
 const stageKind = (name) => (name === "semantic" ? "embedding" : "chat");
 
 // Prices per million tokens, for the estimate a person sees before a paid
-// pass. No price list lives in the code (it names models and goes stale):
-// config.ai.prices may hold { "<model id>": { in, out } }. Without one the
-// estimate uses a typical price for the kind of work.
+// pass. They come from the public model list (`in` and `out` per model). A
+// price typed in config.ai.prices ({ "<model id>": { in, out } }) wins. A
+// model the list has no price for (a typed id, a live-only embedding model)
+// gets a typical price for its kind of work.
 const TYPICAL_PRICE = { embedding: { in: 0.13 }, chat: { in: 1.0, out: 4.0 } };
 export function priceFor(model, kind = "") {
   const prices = cfg().prices || {};
   const p = prices[model] || prices[modelId(model)];
   if (p && Number.isFinite(Number(p.in))) return { in: Number(p.in), out: Number(p.out) || 0 };
+  const c = curatedFind(model);
+  if (c && c.in !== null) return { in: c.in, out: c.out ?? 0 };
   return TYPICAL_PRICE[modelKind(model) || kind || "chat"];
 }
 // Dollars for a pass: rows, average input tokens per row, output tokens
@@ -273,7 +419,7 @@ export function stages() {
     // A blank model means "the live list's pick for the keys I have":
     // resolved at read time, so adding a key later fills it in without a
     // click. `auto` says the model was picked, not chosen.
-    if ("model" in def && !s.model) { s.model = autoModel(stageKind(name)); s.auto = Boolean(s.model); }
+    if ("model" in def && !s.model) { s.model = autoModel(name); s.auto = Boolean(s.model); }
     if (name === "semantic" && !(Number(s.minSim) > 0)) s.minSim = SEMANTIC_FLOOR[providerOf(s.model, "embedding")] ?? 0.4;
     out[name] = s;
   }
@@ -284,7 +430,7 @@ export function stages() {
 export function stageReady(name) {
   const s = stages()[name];
   if (!s || !s.on) return { ready: false, why: "off" };
-  if (name === "fuzzy") return { ready: true };
+  if (name === "fuzzy" || name === "best") return { ready: true };
   if (!s.model) return { ready: false, why: "no model: choose one (or add an API key)" };
   const provider = providerOf(s.model, stageKind(name));
   if (!provider) return { ready: false, why: `no provider for ${s.model}: pick it from the list, or write it as provider:model-id` };
@@ -298,7 +444,7 @@ export const roleModels = () => ({ naming: namingModel(), enrich: enrichModel(),
 
 export const namingInfo = () => {
   const chosen = chosenNamingModel();
-  const model = chosen || autoModel("chat");
+  const model = chosen || autoModel("naming");
   const provider = providerOf(model, "chat");
   // No model resolved yet (no list fetched): a key for any chat provider
   // still counts as configured; the list is read before the first call.
@@ -330,16 +476,50 @@ function remember(provider, model, knob) {
 // The knob a 400 names, among those still being sent; null when none.
 const knobIn = (status, text, knobs, sent) => (status === 400 ? knobs.find(([k, re]) => sent.includes(k) && re.test(text))?.[0] || null : null);
 
+// A model that thinks before it answers spends its max_tokens on the thinking
+// first (Claude Haiku 5.5: a 200 token call spent 112 thinking and stopped with
+// no text). This is the error for an answer that never started.
+const noRoom = (model) => new Error(`${model} used its whole answer allowance before answering. Mitos raised the limit; try again, or pick a different model.`);
+
+// Claude: the lowest thinking the model allows, per request (current Claude API
+// docs, checked 2026-11-20). Thinking off is `thinking: {type: "disabled"}`
+// (Haiku 5.5 takes it at effort high or below; Opus 5, 4.8, 4.7, Sonnet 5 and
+// older models take it). Claude Sonnet 5.5 answers 400 to "disabled" and takes
+// `{type: "between_tools"}` instead. Claude Opus 5.5 and the Fable models cannot
+// switch thinking off at all: they get no `thinking` field, and the lowest
+// `output_config.effort`. Never decided by name: each setting is sent, and a
+// 400 that names it makes the call again with the next one down; the model id
+// is remembered so the ladder is climbed once per process.
+const ANTHROPIC_THINKING = ["disabled", "between_tools"]; // then none
 async function anthropicChat(model, key, { system, user, maxTokens, timeoutMs }) {
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-    body: JSON.stringify({ model, max_tokens: maxTokens, system, messages: [{ role: "user", content: user }] }),
-    signal: AbortSignal.timeout(timeoutMs),
-  });
-  if (!res.ok) throw new Error(`Anthropic ${res.status}: ${(await res.text()).slice(0, 200)}`);
-  const json = await res.json();
-  return (json.content || []).map((c) => c.text || "").join("");
+  for (;;) {
+    const no = refusedBy("anthropic", model);
+    const mode = ANTHROPIC_THINKING.find((m) => !no.has(`thinking:${m}`)) || null;
+    const body = { model, max_tokens: maxTokens + (mode ? 0 : 2000), system, messages: [{ role: "user", content: user }] };
+    if (mode) body.thinking = { type: mode };
+    if (!no.has("effort")) body.output_config = { effort: "low" };
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (res.ok) {
+      const json = await res.json();
+      const text = (json.content || []).map((c) => (c.type === "text" ? c.text || "" : "")).join("");
+      if (!text.trim() && json.stop_reason === "max_tokens") throw noRoom(model);
+      if (!text.trim() && json.stop_reason === "refusal") throw new Error(`${model} declined to answer.`);
+      return text;
+    }
+    const text = await res.text();
+    if (res.status === 400) {
+      // Which setting is the complaint about? Thinking first (its message names
+      // "thinking", "disabled" or "between_tools"), then effort.
+      if (mode && /thinking|disabled|between_tools|budget_tokens/i.test(text)) { remember("anthropic", model, `thinking:${mode}`); continue; }
+      if (body.output_config && /effort|output_config/i.test(text)) { remember("anthropic", model, "effort"); continue; }
+    }
+    throw new Error(`Anthropic ${res.status}: ${text.slice(0, 200)}`);
+  }
 }
 
 // OpenAI's chat/completions shape. No temperature is sent (many models
@@ -366,7 +546,9 @@ async function openaiChat(model, key, { system, user, maxTokens, timeoutMs, json
     });
     if (res.ok) {
       const out = await res.json();
-      return out.choices?.[0]?.message?.content || "";
+      const content = out.choices?.[0]?.message?.content || "";
+      if (!content.trim() && out.choices?.[0]?.finish_reason === "length") throw noRoom(model);
+      return content;
     }
     const text = await res.text();
     const knob = knobIn(res.status, text, OPENAI_KNOBS, Object.keys(body));
@@ -402,7 +584,9 @@ async function googleChat(model, key, { system, user, maxTokens, timeoutMs, json
     });
     if (res.ok) {
       const out = await res.json();
-      return (out.candidates?.[0]?.content?.parts || []).map((p) => p.text || "").join("");
+      const content = (out.candidates?.[0]?.content?.parts || []).map((p) => p.text || "").join("");
+      if (!content.trim() && out.candidates?.[0]?.finishReason === "MAX_TOKENS") throw noRoom(model);
+      return content;
     }
     const text = await res.text();
     const knob = knobIn(res.status, text, GOOGLE_KNOBS, Object.keys(gen));

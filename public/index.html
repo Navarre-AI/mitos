@@ -6,11 +6,11 @@
 <title>Mitos</title>
 <style>
   :root { --bg:#101418; --panel:#1a2027; --text:#e6e9ec; --dim:#8b96a0; --accent:#d9a441; --line:#2a323b;
-          --ok:#4caf7d; --warn:#d98041; color-scheme:dark; }
+          --ok:#4caf7d; --warn:#d98041; --bad:#e0605b; color-scheme:dark; }
   /* Light theme: the system's choice by default, a switch to override,
      remembered per browser. */
   :root[data-theme="light"] { --bg:#f6f7f8; --panel:#ffffff; --text:#1c2328; --dim:#5f6b76; --accent:#b8821f; --line:#d9dee3;
-          --ok:#2e8b57; --warn:#c2621f; color-scheme:light; }
+          --ok:#2e8b57; --warn:#c2621f; --bad:#c0352f; color-scheme:light; }
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--text); font:15px/1.5 -apple-system, "Segoe UI", sans-serif; }
   .wrap { max-width:720px; margin:0 auto; padding:32px 20px 80px; }
@@ -229,6 +229,28 @@
   .tnum { width:76px; flex:none; text-align:right; font-variant-numeric:tabular-nums; }
   .tnum.f { width:52px; }
   .tdotw { width:26px; flex:none; display:flex; justify-content:center; }
+  /* Per-table semantic search: a switch and the vectors it holds. Shown only while the stage is on. */
+  .tsem { width:128px; flex:none; display:none; align-items:center; gap:8px; font-size:11.5px; color:var(--dim); font-variant-numeric:tabular-nums; white-space:nowrap; }
+  #tblList.sem-on .tsem { display:flex; }
+  #tblList.sem-on .tlabel { min-width:100px; }
+  .thead .tsem { font-size:10.5px; }
+  .trow .tsem input.sw { appearance:none; -webkit-appearance:none; width:30px; height:17px; border-radius:9px; background:var(--line); position:relative; cursor:pointer; flex:none; margin:0; transition:background .15s; }
+  .trow .tsem input.sw::after { content:""; position:absolute; top:2px; left:2px; width:13px; height:13px; border-radius:50%; background:var(--text); transition:left .15s; }
+  .trow .tsem input.sw:checked { background:var(--accent); }
+  .trow .tsem input.sw:checked::after { left:15px; }
+  /* Log tab: record updates, problems first and red. */
+  .tabs button .tbadge { display:inline-block; min-width:18px; padding:0 6px; margin-left:6px; border-radius:9px; background:var(--bad); color:#fff; font-size:11px; font-weight:600; line-height:18px; text-align:center; }
+  .rrow { display:flex; gap:12px; padding:7px 0; border-top:1px solid var(--line); font-size:13px; align-items:baseline; }
+  .rrow .rwhen { width:130px; flex:none; color:var(--dim); font-size:12px; }
+  .rrow .rwhat { flex:1; min-width:0; overflow-wrap:anywhere; }
+  .rrow .rsub { color:var(--dim); font-size:12px; margin-top:2px; overflow-wrap:anywhere; }
+  .rrow.bad .rwhat { color:var(--bad); }
+  .rrow.bad .rsub { color:var(--bad); opacity:.85; }
+  /* Settings tab: what this server is. */
+  .about-grid { display:grid; grid-template-columns:max-content 1fr; gap:6px 18px; font-size:13px; }
+  .about-grid .k { color:var(--dim); }
+  .about-grid .v { overflow-wrap:anywhere; }
+  .about-grid .v .tight { color:var(--warn); }
   .tdot { width:9px; height:9px; border-radius:50%; display:inline-block; flex:none; }
   .tdot.ok { background:var(--ok); }
   .tdot.slow { background:var(--accent); }
@@ -260,6 +282,7 @@
   .row.best .bestlbl { font-size:10.5px; color:var(--accent); text-transform:uppercase; letter-spacing:.08em; font-weight:600; margin-bottom:2px; }
   .simhead { font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:var(--dim); margin:26px 0 8px; padding-top:12px; border-top:1px dashed var(--line); }
   .meta .think { color:var(--accent); }
+  .row.best .bestlbl .tagv { text-transform:none; letter-spacing:0; font-weight:400; color:var(--dim); }
   /* Provider chips on the AI card, and the rows on the providers screen */
   .provchip { display:inline-flex; align-items:center; gap:7px; border:1px solid var(--line); border-radius:9px; padding:6px 12px; font-size:13px; }
   .provchip .dot { width:8px; height:8px; border-radius:50%; background:var(--line); }
@@ -325,9 +348,53 @@
   .pass .k { color:var(--dim); width:150px; flex:none; }
   .ledger { font-size:12.5px; color:var(--dim); margin-top:8px; }
   .ledger div { padding:2px 0; }
+
+  /* ---- The sync strip: a thin line across the top while a sync runs with its window closed ---- */
+  #syncStrip { display:none; position:fixed; top:0; left:0; right:0; z-index:30; height:30px; align-items:center; gap:10px; padding:0 14px;
+               font-size:12.5px; background:var(--panel); color:var(--text); border-bottom:1px solid var(--line); cursor:pointer;
+               -webkit-user-select:none; user-select:none; overflow:hidden; }
+  #syncStrip.on { display:flex; }
+  #syncStrip .ss-dot { width:8px; height:8px; border-radius:50%; background:var(--accent); flex:none; }
+  #syncStrip.ok .ss-dot { background:var(--ok); }
+  #syncStrip.bad { color:var(--warn); }
+  #syncStrip.bad .ss-dot { background:var(--warn); }
+  #syncStrip .ss-txt { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  #syncStrip .ss-btn { background:none; border:0; color:var(--accent); font-size:12.5px; padding:4px 6px; cursor:pointer; flex:none; }
+  #syncStrip .ss-btn:hover { text-decoration:underline; }
+  #syncStrip .ss-fill { position:absolute; left:0; bottom:0; height:2px; background:var(--accent); width:0; transition:width .3s; }
+  #syncStrip.ok .ss-fill, #syncStrip.bad .ss-fill { display:none; }
+  body.has-strip { padding-top:30px; }
+  body.has-strip .searchbar { top:30px; }
+  body.embed #syncStrip { display:none !important; }
+  .sync-banner { display:flex; align-items:center; gap:14px; margin:-4px 0 14px; padding:10px 14px; border:1px solid var(--line); border-radius:10px; background:var(--bg); font-size:13.5px; }
+  .sync-banner span { flex:1; min-width:0; }
+  .sync-banner .btn { flex:none; }
+  /* ---- Danger zone: a red outline, quiet red buttons that fill on hover ---- */
+  .card.dz { border-color:color-mix(in srgb, var(--bad) 60%, var(--line)); }
+  .card.dz h3 { color:var(--bad); }
+  .dz-row { display:flex; align-items:center; gap:14px; padding:10px 0; border-top:1px solid var(--line); }
+  .card.dz h3 + .dz-row { border-top:0; padding-top:2px; }
+  .dz-txt { flex:1; min-width:0; }
+  .dz-n { font-size:13.5px; font-weight:600; }
+  .dz-d { font-size:12px; color:var(--dim); margin-top:2px; }
+  .btn.dq { background:transparent; color:var(--bad); border:1px solid var(--bad); font-weight:600; font-size:12.5px; padding:5px 12px; flex:none; }
+  .btn.dq:hover { background:var(--bad); color:#fff; }
+  .btn.dqs { background:var(--bad); border:1px solid var(--bad); color:#fff; font-weight:600; }
+  .btn.dqs:disabled { opacity:.45; cursor:default; }
+  .rs-row { display:flex; gap:10px; align-items:flex-start; padding:7px 0; border-bottom:1px solid var(--line); cursor:pointer; margin:0; color:var(--text); font-size:inherit; }
+  .rs-row input { width:16px; height:16px; margin-top:2px; accent-color:var(--bad); flex:none; }
+  .rs-n { font-size:13.5px; color:var(--text); }
+  .rs-d { font-size:12px; color:var(--dim); margin-top:1px; }
+  .cmdbox { display:flex; align-items:center; gap:10px; border:1px solid var(--line); border-radius:8px; background:var(--bg); padding:10px 12px; margin:10px 0; }
+  .cmdbox code { flex:1; min-width:0; font:13px ui-monospace,SFMono-Regular,Menlo,monospace; user-select:all; -webkit-user-select:all; word-break:break-all; }
+  /* Stage rows: the AI best match sits under Best match */
+  .stg.sub { margin-left:46px; border-top:1px dashed var(--line); }
+  .stg .rec { color:var(--dim); font-size:12px; flex-basis:100%; }
 </style>
 </head>
 <body>
+<!-- The sync strip: a sync keeps running when its window is closed; this line shows how far it got. -->
+<div id="syncStrip" role="status"><span class="ss-dot"></span><span class="ss-txt" id="syncStripText"></span><button class="ss-btn" id="syncStripLink" type="button">Watch</button><button class="ss-btn" id="syncStripOk" type="button" style="display:none">OK</button><span class="ss-fill" id="syncStripFill"></span></div>
 <div class="wrap">
   <h1>Mitos <span class="thread">&#x2E31;&mdash;&#x2E31;</span></h1>
   <p class="tag">The thread through your database. One field, any table, the right record.</p>
@@ -367,7 +434,8 @@
       <button id="tabbtn-fm" type="button" class="on">Data Sources</button>
       <button id="tabbtn-tables" type="button">Tables</button>
       <button id="tabbtn-ai" type="button">AI</button>
-      <button id="tabbtn-log" type="button">Log</button>
+      <button id="tabbtn-log" type="button">Log<span class="tbadge" id="logBadge" style="display:none"></span></button>
+      <button id="tabbtn-settings" type="button">Settings</button>
     </div>
     <div class="p-list">
 
@@ -428,12 +496,6 @@
             </select>
           </div>
         </div>
-        <div class="card">
-          <h3>This server <span class="hint">where Mitos itself runs</span></h3>
-          <p class="intro">No hosting credential is stored in the app; that stays with whoever deploys it. API keys and the FileMaker login live on this server's volume, behind the site password.</p>
-          <div class="kv"><span class="k">Index</span><span id="srvIndex">&ndash;</span></div>
-          <div class="kv"><span class="k">Last build</span><span id="srvBuilt">&ndash;</span></div>
-        </div>
       </div>
 
       <div id="tab-tables" style="display:none">
@@ -485,6 +547,7 @@
           </div>
           <div class="field" style="margin-bottom:2px" id="namingField"><span>Model that names your tables at scan time</span>
             <select id="namingModelSel" style="width:auto"></select>
+            <span class="note" id="namingHint" style="min-height:0"></span>
           </div>
         </div>
         <div class="card">
@@ -496,15 +559,49 @@
           <h3>Paid passes <span class="hint">what a Run would do now, and what has run</span></h3>
           <div id="passList"></div>
         </div>
-        <div class="note" id="aiVersion" style="text-align:right;font-size:11.5px;padding:2px 4px 8px;min-height:0"></div>
       </div>
 
       <div id="tab-log" style="display:none">
+        <div class="card" id="recCard">
+          <h3>Record updates <span class="hint">records FileMaker told Mitos about, newest first, problems on top</span></h3>
+          <div id="recRows"></div>
+        </div>
         <div class="card">
           <h3>Searches <span class="hint">every search and click on this box, newest first</span></h3>
           <p class="intro">A search with no click is the interesting one: either nothing matched, or the right record was not recognisable in the list.</p>
           <div class="btns"><button class="btn" id="logRefresh">Refresh</button><span class="note" id="logTotals"></span></div>
           <div id="logRows" style="margin-top:10px"></div>
+        </div>
+      </div>
+
+      <div id="tab-settings" style="display:none">
+        <div class="card" id="aboutCard">
+          <h3>This Mitos <span class="hint">where it runs and what it holds</span></h3>
+          <div class="about-grid" id="aboutGrid"><span class="k">&nbsp;</span><span class="v">loading...</span></div>
+        </div>
+        <div class="card dz" id="dangerCard">
+          <h3>Danger zone</h3>
+          <div class="dz-row">
+            <div class="dz-txt"><div class="dz-n">Reset Mitos</div><div class="dz-d">Choose what to wipe: the search index, the local copies, the keys, or everything.</div></div>
+            <button class="btn dq" id="dzReset" type="button">Reset Mitos&hellip;</button>
+          </div>
+          <div class="dz-row" id="dzDropRow">
+            <div class="dz-txt"><div class="dz-n">Delete a table's local copy</div><div class="dz-d">Mitos deletes what it synced from one table, and unticks it. Your FileMaker data is untouched.</div></div>
+            <button class="btn dq" id="dzDrop" type="button">Delete&hellip;</button>
+          </div>
+          <div class="dz-row">
+            <div class="dz-txt"><div class="dz-n">Rebuild the search index</div><div class="dz-d">Builds the index again from the local copies. Nothing is read from FileMaker.</div></div>
+            <button class="btn dq" id="dzRebuild" type="button">Rebuild</button>
+          </div>
+          <div class="dz-row">
+            <div class="dz-txt"><div class="dz-n">Sign everyone out</div><div class="dz-d">Everyone who is signed in, you too, has to sign in again.</div></div>
+            <button class="btn dq" id="dzSignout" type="button">Sign out all</button>
+          </div>
+          <div class="dz-row" id="dzDeleteRow" style="display:none">
+            <div class="dz-txt"><div class="dz-n">Delete this Mitos</div><div class="dz-d">Wipes everything, then shows the one command that removes the server itself.</div></div>
+            <button class="btn dq" id="dzDelete" type="button">Delete this Mitos&hellip;</button>
+          </div>
+          <div id="dzMsg" class="note" style="margin-top:6px"></div>
         </div>
       </div>
     </div>
@@ -548,7 +645,7 @@
         <div class="wiz-err" id="wizFilesErr"></div>
       </div>
       <div class="wiz-body" data-wstep="3" style="display:none">
-        <p class="wiz-why">Mitos uses your own API key for two things: naming your tables at scan time, and the AI stages you switch on later (Enhanced search, Semantic search, Enrichment, Pick the best). With every stage off, search makes no API call. The key is stored on your server, and you can change it any time in Settings.</p>
+        <p class="wiz-why">Mitos uses your own API key for two things: naming your tables at scan time, and the AI stages you switch on later (Enhanced search, Semantic search, Enrichment, AI best match). With every stage off, search makes no API call. The key is stored on your server, and you can change it any time in Settings.</p>
         <div class="set-row" style="gap:16px;align-items:flex-end;margin-bottom:4px">
           <div>
             <div style="font-size:12.5px;color:var(--dim);margin-bottom:5px">Provider</div>
@@ -557,7 +654,7 @@
               <button type="button" class="wizprov" data-prov="openai">OpenAI</button>
             </div>
           </div>
-          <div class="field" style="margin:0;flex:1;min-width:180px"><span>Model</span><select id="wizModel" style="width:100%"></select></div>
+          <div class="field" style="margin:0;flex:1;min-width:180px"><span>Model</span><select id="wizModel" style="width:100%"></select><span class="note" id="wizModelHint" style="min-height:0"></span></div>
         </div>
         <div class="field" style="margin-top:12px"><span id="wizKeyLabel">Anthropic API key</span><input type="password" id="wizKey" placeholder="paste it here, it is checked for you" autocomplete="off" spellcheck="false"></div>
         <div class="wiz-ok" id="wizKeyOk"></div>
@@ -579,6 +676,7 @@
         <div style="display:flex;gap:14px;margin-bottom:6px"><button class="link" id="wizSelAll" type="button">Select all</button><button class="link" id="wizSelNone" type="button">Deselect all</button></div>
         <div class="wiz-list" id="wizTables"></div>
         <div class="note" style="margin-top:10px" id="wizPickSum"></div>
+        <div class="wiz-err" id="wizPickErr"></div>
       </div>
       <div class="wiz-body" data-wstep="6" style="display:none">
         <p class="wiz-why">Exact, type-aware search always runs. These stages add to it, one at a time. Each one is its own switch, and a switch saves itself. You can change them later on the AI tab in Settings.</p>
@@ -587,6 +685,7 @@
       <div class="wiz-body" data-wstep="7" style="display:none">
         <p class="wiz-why">Mitos now copies the chosen fields of those tables into its search index. Your FileMaker data is not changed.</p>
         <div class="wiz-pre" id="wizPlan"></div>
+        <div class="wiz-err" id="wizPlanErr"></div>
       </div>
       <div class="wiz-body" data-wstep="8" style="display:none">
         <div class="card wiz-kit" style="margin-bottom:10px">
@@ -625,6 +724,7 @@
       <span id="syncSub" style="margin-left:0"></span><span class="ell" id="syncEll"></span>
     </div>
     <div class="p-list" style="padding:12px 18px;overflow-y:auto">
+      <div class="sync-banner" id="syncBackgroundNote"><span>You don't have to wait. The sync keeps going, and a bar at the top shows how far it got.</span><button class="btn primary" id="syncKeepWorking" type="button">Keep working</button></div>
       <div class="sync-overall"><div id="syncOverall"></div></div>
       <div class="sync-now" id="syncNow">
         <div class="sn-top"><span class="sn-tbl" id="syncNowTable"></span><span class="sn-st" id="syncNowStatus"></span><span class="sn-prog" id="syncNowProg"></span></div>
@@ -691,7 +791,7 @@
     <div class="p-head"><strong>Enrichment</strong><span class="note">a fast model writes search notes for each record, once</span></div>
     <div class="p-list" style="padding:8px 18px 14px">
       <div class="frow">
-        <div class="field" style="margin-bottom:10px;min-width:260px"><span>Model</span><select id="enModel" style="width:auto"></select></div>
+        <div class="field" style="margin-bottom:10px;min-width:260px"><span>Model</span><select id="enModel" style="width:auto"></select><span class="note" id="enHint" style="min-height:0"></span></div>
       </div>
       <div class="field" style="margin-bottom:10px"><span>Rules for the notes</span><textarea id="enPrompt" rows="4" spellcheck="false" style="font-size:13px"></textarea>
         <span class="note">One rule set for every table in this version. The output rules (plain text, nothing invented) are added for you.</span></div>
@@ -700,6 +800,53 @@
       <div id="enPreview" style="margin-top:8px"></div>
     </div>
     <div class="p-foot"><span class="note">Later switches it on and writes up to 1,000 notes per sync; Run now writes them all.</span><span class="sp"></span><button class="btn" id="enCancel">Cancel</button><button class="btn" id="enLater">Later</button><button class="btn primary" id="enRun">Run now</button></div>
+  </div>
+</div>
+
+<!-- Reset Mitos: tick what to wipe. FileMaker is never touched. -->
+<div class="overlay" id="resetOverlay">
+  <div class="panel" style="width:min(560px,94vw);max-height:calc(100vh - 56px)">
+    <div class="p-head"><strong>Reset Mitos</strong><button class="link" id="resetAll" type="button">Tick all</button></div>
+    <div class="p-list" style="padding:12px 18px">
+      <p id="resetLead" style="margin:0 0 10px;font-size:13px;color:var(--dim);line-height:1.55"></p>
+      <div id="resetList"></div>
+      <p style="margin:10px 0 0;font-size:12.5px;color:var(--dim)">Nothing in FileMaker is ever touched. Only Mitos's own files are deleted.</p>
+    </div>
+    <div class="p-foot"><span id="resetMsg" class="note"></span><span class="sp"></span><button class="btn" id="resetCancel" type="button">Close</button><button class="btn dqs" id="resetGo" type="button">Wipe what is ticked</button></div>
+  </div>
+</div>
+
+<!-- Delete the local copy of one table. FileMaker is untouched. -->
+<div class="overlay" id="dropOverlay">
+  <div class="panel" style="width:min(480px,94vw)">
+    <div class="p-head"><strong>Delete a table's local copy</strong></div>
+    <div class="p-list" style="padding:12px 18px;font-size:13px">
+      <p style="margin:0 0 10px;color:var(--dim);line-height:1.55">Mitos deletes what it synced from the table you pick, and unticks it. Your FileMaker data is untouched. Tick it again on the Tables tab and sync to bring it back.</p>
+      <select id="dropPick" style="width:100%"></select>
+    </div>
+    <div class="p-foot"><span id="dropMsg" class="note"></span><span class="sp"></span><button class="btn" id="dropCancel" type="button">Close</button><button class="btn dqs" id="dropGo" type="button">Delete the local copy</button></div>
+  </div>
+</div>
+
+<!-- After "Delete this Mitos": the one thing Mitos cannot do itself. -->
+<div class="overlay" id="destroyOverlay">
+  <div class="panel" style="width:min(560px,94vw)">
+    <div class="p-head"><strong>Mitos is wiped</strong></div>
+    <div class="p-list" style="padding:14px 18px;font-size:13.5px;line-height:1.55">
+      <p style="margin:0">Mitos can't delete its own server. Run this in Terminal to finish.</p>
+      <div class="cmdbox"><code id="destroyCmd"></code><button class="btn" id="destroyCopy" type="button">Copy</button></div>
+      <p class="note" id="destroyNote" style="margin:0"></p>
+    </div>
+    <div class="p-foot"><span class="sp"></span><button class="btn" id="destroyClose" type="button">Close</button></div>
+  </div>
+</div>
+
+<!-- Asks once before a delete: what goes, what happens, then the verb. -->
+<div class="overlay" id="askOverlay" style="z-index:50">
+  <div class="panel" style="width:min(440px,92vw)">
+    <div class="p-head"><strong id="askTitle"></strong></div>
+    <div class="p-list" style="padding:12px 18px;font-size:13px;line-height:1.55"><p id="askText" style="margin:0;white-space:pre-line"></p></div>
+    <div class="p-foot"><span class="sp"></span><button class="btn" id="askNo" type="button">Close</button><button class="btn dqs" id="askYes" type="button"></button></div>
   </div>
 </div>
 

@@ -12,8 +12,21 @@ Canon cameras from Products, Canonical Systems from Companies, and Mary Cannon
 from People, without one table drowning out the others.
 
 Sibling of [Pythia](https://github.com/Navarre-AI/pythia) (reports) and
-[Clio](https://github.com/Navarre-AI/clio) (logs). Runs in your own cloud account, on your bill, under your
-control.
+[Clio](https://github.com/Navarre-AI/clio) (logs). Runs in your own cloud
+account, on your bill, under your control. Nothing in it writes to FileMaker.
+
+## Who built it
+
+Mitos is a human and AI partnership, and proud of it.
+
+- **Matt Navarre**: the idea, the design, every decision, and a lot of testing.
+  Forty years of FileMaker and one stubborn belief that search should be one
+  field.
+- **Claude** (Anthropic), working in Claude Code as Hera: most of the code,
+  the reviews and the test runs.
+- **Clawdia**: Matt's always-on agent, running Hermes, who tests the builds
+  around the clock.
+- **Maia**: Matt's OpenAI Codex agent, on the marketing and website side.
 
 ## How search works (deterministic and type-aware first)
 
@@ -41,8 +54,9 @@ Text is normalized on both sides (lower case, accents stripped, punctuation
 ignored), so `Navarré` finds `navarre`. A word scores higher as a whole word
 than as a word start, and highest in the record's title (the first display
 field). Ties break on title length and record id, so the same query always
-returns the same list, and every hit carries a reason in words: `bob as
-robert in the title`, `number 65 in range`, `phone ends with it`.
+returns the same list. Every hit carries a reason in words in the API and
+the search log (`bob as robert in the title`, `number 65 in range`, `phone
+ends with it`). The page doesn't print it under each result.
 
 Day and month order follows the **Date format** setting (month first by
 default). When one part cannot be a month, the data decides.
@@ -51,33 +65,36 @@ The name table ships with common English nicknames plus some Greek and other
 European forms (`names.config.js`). Write `data/names.json` as an array of
 arrays to replace it.
 
-## The stages (five switches on top of the exact search)
+## The stages (switches on top of the exact search)
 
 The exact search above always runs first and shows at once. Five stages sit
-on top of it, each with its own switch on the AI tab in Settings, its own
-model and time budget, and each can be off while the others run. A stage
-that is late or broken records an error in the response's `stages` and the
-search still answers.
+on top of it, plus a plain Best match rule, each with its own switch on the
+AI tab in Settings. Each stage has its own model and time budget, and each
+can be off while the others run. A stage that is late or broken records an
+error in the response's `stages` and the search still answers.
 
-| Stage | What it does | Model | When it runs |
+| Stage (its switch) | What it does | Model | When it runs |
 |---|---|---|---|
 | Close spellings | Jaro-Winkler on record names: `Murpy`, `whitfeild`, `Ac me systems`, `bob whitfeld` (the name table applies) | none | with the exact search, in about 20 ms |
-| Similar meaning | A vector per record; `mid-range digital SLR` lists the cameras below the exact hits under "Similar" | an embedding model: OpenAI text-embedding-3, Gemini, or Voyage | vectors are built during sync; the query is embedded at search time and cached |
-| Search notes | During sync, a fast model writes notes per record: other spellings, `Last, First`, nicknames, plain words for what it is. Searched, never shown; a hit through them says "in the search notes" | a fast chat model, ten records per call | at sync, only for rows without notes, per table (switch and prompt on the Tables tab), capped per sync |
-| Read the search | `people with birthdays in the first half of May` becomes `5/1/2026...5/15/2026`; `inv 2216` becomes `2216`; `someone named bob whitfeld or something` becomes `bob whitfeld`. The rewrite runs through the exact search again, so every hit still has a reason | a fast chat model | only for two or more words; skipped for one word, a number, a date, an email, a phone |
-| Pick the best | Reorders the short list and names one best match when it is sure, shown on top as "Best match". Below the confidence floor the list is the answer. Without this stage, one clear answer is still named when exactly one record carries every word in its name | a fast chat model | only for word searches with two or more candidates |
+| Enrichment | During sync, a fast model writes notes per record: other spellings, `Last, First`, nicknames, plain words for what it is. Searched, never shown; a hit through them says "in the search notes" in the API | a fast chat model, ten records per call | at sync, only for rows without notes, per table (switch and prompt on the Tables tab), capped per sync |
+| Semantic search | A vector per record; `mid-range digital SLR` lists the cameras below the exact hits. It has a switch per indexed table too, with the vector count and size | an embedding model: OpenAI text-embedding-3, Gemini, or Voyage | vectors are built during sync; the query is embedded at search time and cached |
+| Enhanced search: Interpret meaning | `people with birthdays in the first half of May` becomes `5/1/2026...5/15/2026`; `inv 2216` becomes `2216`; `someone named bob whitfeld or something` becomes `bob whitfeld`. The rewrite runs through the exact search again | a fast chat model | only for two or more words; skipped for one word, a number, a date, an email, a phone |
+| Best match | A plain rule, no model, no key. One record is marked best when every word you typed matches it and the next result is well behind (or an email, phone or number only one record has). Switch it off and no record is marked | none | with every word search |
+| Use AI to determine best match | Sits under Best match. A fast model reorders the short list and names one best match when it is sure. Below its confidence the list is the answer | a fast chat model | only for word searches with two or more candidates |
 
 The page shows the exact list in tens of milliseconds, then asks for the AI
 phase once the words stand still, and fills it in behind: a "read as" line,
 the "Semantic matches" section (or "Perhaps you meant" when even the best
-is weak; semantic search always shows its nearest rows), the best match on
-top with its reason. A FileMaker card window does the same, with the words
-still in the field to edit.
+is weak; semantic search always shows its nearest rows), and the best match
+on top. A FileMaker card window does the same, with the words still in the
+field to edit.
 
-Two screens: the plain page is the search with one Settings button;
-`?settings=1` opens Settings with the search behind it as a test;
-`?embed=1&q=...` is the card window. Escape backs out of Settings one level
-at a time. Light or dark follows the system, with a switch bottom right.
+Two screens: the plain page is the search with one Settings button, and
+`?embed=1&q=...` is the card window (results only). Settings has five tabs:
+**Data Sources**, **Tables**, **AI**, **Log** and **Settings** (this
+machine, its memory and disk, the version, and the Danger zone). Escape backs
+out of Settings one level at a time. Light or dark follows the system, with a
+switch if you want to override it.
 
 **Paid passes are a formal step.** Switching Semantic search on shows the
 record count and the price first, then Run now or Later. Switching
@@ -86,10 +103,15 @@ preview of the notes on two records per table, the price, then Run now or
 Later. A plain sync stays under a quiet cap (5,000 vectors, 1,000 notes);
 the rest waits for Run on the AI tab, which shows what is waiting and a
 ledger of what has run. Every stage row has a "?" that explains it in full.
+Turning Semantic search off warns first, then deletes the vectors to free
+disk.
 
-Every stage's model defaults to the cheapest current model of the first
-provider with a key (Claude Haiku, then GPT, then Gemini; embeddings: Gemini,
-then Voyage, then OpenAI). Keys for four providers live on the AI tab.
+**Models come from a public list.** The menus read
+https://navarre.ai/ai-models.json, the same list Pythia and Clio use. It is
+refreshed every 12 hours and whenever you save a key, grouped by job, with a
+recommended pick per stage. A stage you haven't set takes the recommended
+model of the first provider that has a key. Keys for four providers live on
+the AI tab.
 
 The one other AI call is the schema naming pass at scan time (D_Org~B becomes
 Organization), and it is optional too.
@@ -115,16 +137,25 @@ irm https://navarre.ai/get/mitos.ps1 | iex
 ```
 
 It installs the Fly CLI if needed, asks for a name and a region, builds Mitos
-in the cloud, and opens it in your browser with its password. Nothing is left
+in the cloud, and opens it in your browser with its key. Nothing is left
 on your machine but Fly's own tool. The setup screens do the rest. The whole
 walk-through, with the FileMaker side: https://navarre.ai/mitos/start
 
+**The key.** Mitos sits behind one key (the `SITE_PASSWORD` secret on your
+Fly app). Open the bare address and it asks for the key on a sign-in page,
+then keeps you signed in for 30 days with a session cookie (only a hash of
+the token is stored, never the key). Five wrong keys pause sign-in for a
+minute. A page opened with `?key=<key>` signs itself in and lands on the same
+address without the key, which is how a FileMaker web viewer does it, since
+it can't answer a Basic auth prompt. Scripts can send `?key=` or Basic auth
+to `/api/` routes. Settings, Danger zone has **Sign out all**.
+
 ## Before you install
 
-- On FileMaker Server, turn on **OData** and the **Data API** (Admin Console,
-  Connectors).
+- On FileMaker Server, turn on **OData** (Admin Console, Connectors). The
+  Data API isn't needed.
 - In each file, make a **read-only account** for Mitos with a privilege set
-  that has only `fmodata` and `fmrest` (Extended Privileges). Nothing else.
+  that has the `fmodata` extended privilege. Nothing else.
 - Create a **Fly.io** account. Mitos runs there as one small machine.
 - Get **one API key**. A Google AI key covers everything (naming, the search
   stages and semantic search). A Claude or OpenAI key covers everything but
@@ -153,7 +184,7 @@ measure the stages against each other on a few hundred simulated searches.
 
 The first run opens an eight-step setup, one screen each: **Connect**
 (server and the read-only login, tested before it is saved), **Files** (the
-ones that login can open, one or more), **AI key** (checked the moment you
+ones that login can open, one or more), **API key** (checked the moment you
 paste it; it names your tables), **Scan** (reads tables, fields and record
 counts, with progress you can watch; no data is copied), **Tables** (the
 ones worth searching are pre-checked; Select all and Deselect all), **AI
@@ -183,9 +214,16 @@ Sync is a modal that watches a server-side job: reload the page mid-sync and
 it reattaches. Tables sync A to Z by display name, incrementally where the
 table has a primary key and a modification timestamp. A record deleted in
 FileMaker is noticed by a record count check on each sync and removed from
-the copy and the index.
+the copy and the index. The Records column on the Tables tab shows
+FileMaker's count as of the last sync. Duplicate primary keys never stop a
+sync: Mitos keeps the newer twin and names the ID to fix in FileMaker.
+Unticking a table removes its copy too, after a confirm that names it.
 
 ## API
+
+Every route needs the key: a signed-in session cookie, `?key=<key>`, or
+HTTP Basic auth (any user name, the key as the password). Without one,
+`/api/` answers 401 `Not signed in.` and pages go to `/signin`.
 
 - `GET /api/search?q=...&limit=5` returns `{ query, kind, searched, plan,
   groups, merged, best, stages, timings }`, or `{ empty: true }` when nothing
@@ -194,7 +232,7 @@ the copy and the index.
   carries `why` and `via` (exact, fuzzy, semantic). `stages.pending` lists
   the model stages still to run. Display data is copied verbatim from source
   rows. GET so a FileMaker web viewer or Insert From URL can call it with
-  `?key=<password>`. Options: `tables=raw,names` limits the search to those
+  `?key=<key>`. Options: `tables=raw,names` limits the search to those
   tables (a per-user filter the FileMaker script can send); `stages=exact,
   fuzzy,semantic,understand,rerank` runs an explicit stage set; `ai=1` runs
   both phases in one response.
@@ -202,11 +240,14 @@ the copy and the index.
   `reading`, `rewritten`, `similar` and `similarMerged` (rows from the
   vector stage, not in the list above), and `best` from the pick stage.
 - `GET /api/index/sample?n=20&table=` returns random indexed rows.
-- `POST /api/records/changed` with `{ tables: { "<raw name>": { changed:
-  [ids], deleted: [ids] } } }` pulls those records by primary key, indexes
-  them and runs the stages on them. Not used in 1.0, where records update
-  on the timed sync; kept for a later record-by-record path. 202 while a
-  sync runs.
+- `POST /api/records/changed` with `{ "table": "<raw name>", "id": "<primary key>" }`
+  (or `ids` / `deleted` lists, or `{ tables: { "<raw name>": { changed: [ids],
+  deleted: [ids] } } }`) refreshes those records right after a commit. It
+  answers 202 at once and does the work behind, so FileMaker never waits.
+  The kit's "Mitos - Record Changed" script sends it from an OnRecordCommit
+  trigger through Perform Script on Server, so no "Transferring URL" shows.
+  Unknown tables and records FileMaker no longer has show in the Log tab
+  under Record updates. The timed sync still runs as the safety net.
 - `POST /api/index/sync` with `{ full: true }` runs the paid passes without
   their per-sync caps. `GET /api/ai/estimate` says what a Run would do and
   cost, and lists past passes. `POST /api/ai/enrich-preview` writes sample
@@ -218,6 +259,11 @@ the copy and the index.
   a scan runs (`?refresh=1` starts one; `GET /api/fm/scan/progress` reports
   it); `?rename=1` re-runs the naming pass. `POST /api/config` saves the
   table choice. `POST /api/schema/saxml` uploads a Save-a-Copy-as-XML file.
+- `GET /api/records/log` lists what the record-by-record route did, newest
+  first. `GET /api/about` describes this machine (Settings tab).
+- `POST /api/reset` (`items`: any of index, copies, notes, config, keys,
+  logs, sessions), `POST /api/tables/drop` (`{ table }`) and `POST
+  /api/ai/semantic/off` are the Danger zone's calls.
 - `POST /api/click` records the query, the table, the record id, the rank and the score to a JSONL log.
 - `GET /api/health`
 
@@ -255,3 +301,7 @@ reads as record data is generated. See RULES.md.
 - [SECURITY.md](SECURITY.md): what Mitos stores, where, who can read it, what leaves and when.
 - [EXTENDING.md](EXTENDING.md): a stage, a provider, a query kind, an eval case.
 - [CHANGELOG.md](CHANGELOG.md), [GOTCHAS.md](GOTCHAS.md), [RULES.md](RULES.md), [filemaker/README.md](filemaker/README.md).
+- License: MIT. See `LICENSE`. © 2026 Navarre AI (Fermata Software LLC),
+  created by Matt Navarre. [navarre.ai](https://navarre.ai)
+- Stuck? [TROUBLESHOOTING.md](TROUBLESHOOTING.md) ends with a free 15-minute
+  call.

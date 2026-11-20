@@ -9,8 +9,9 @@ reflected there.
 
 2. **Search is deterministic.** The same query on the same index returns the
    same list, in the same order, with no model call. Every rank has a reason
-   a person can read (which words matched, where). Semantic search is
-   parked, not forbidden; when it returns it sits beside this, not instead.
+   a person can read (which words matched, where). The API and the search log
+   carry it; the page doesn't print it under each result. Semantic search is
+   an optional stage: its rows sit below the exact ones, never instead of them.
 
 2a. **The type decides the fields.** The whole input is read as one kind of
    thing (words, number, range, date, date range, email, phone) before any
@@ -24,7 +25,9 @@ reflected there.
    meaning (a vector per record), search notes (a model writes them at sync
    time), reading the search (a model rewrites words into the exact syntax),
    and picking the best (a model reorders the short list). Each has its own
-   switch, model and time budget. The exact list is shown before any model
+   switch, model and time budget. A plain Best match rule (no model) marks
+   one record when every typed word matches it and the next result is well
+   behind; it has its own switch, and the AI pick hangs under it. The exact list is shown before any model
    is asked and is never removed by one. A late or broken stage records an
    error in `stages` and the search still answers. Search notes are searched
    and never shown; a hit through them says so in `why`.
@@ -39,8 +42,8 @@ reflected there.
 5. **You never see the plumbing.** No table occurrence names, UUIDs, SQL, or
    scores presented as facts.
 
-6. **Fewest moving parts.** Express is the only npm dependency. The one AI
-   call (schema naming) uses raw fetch. DuckDB is a subprocess, not a native
+6. **Fewest moving parts.** Express is the only npm dependency. Every AI
+   call uses raw fetch. DuckDB is a subprocess, not a native
    module. No frameworks in the frontend.
 
 7. **Nothing runs unasked.** Boot never syncs. A sync starts when a person

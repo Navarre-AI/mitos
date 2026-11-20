@@ -26,6 +26,7 @@ import { stages, STAGE_NAMES, keyForProvider, providerOf } from "./ai.js";
 import { embedQuery, vectorKey } from "./embed.js";
 import { understand } from "./understand.js";
 import { rerank } from "./rerank.js";
+import { semanticTables } from "./semantic.js";
 
 // Which stages run for this search: the saved switches, or an explicit list
 // (the simulator and the eval compare stage sets this way). A model stage
@@ -34,9 +35,11 @@ function activeStages(override) {
   const on = {};
   const cfg = stages();
   for (const name of STAGE_NAMES) {
-    const wanted = override ? override.has(name) : cfg[name].on;
+    // `best` is not a search stage an explicit list names (the simulator and
+    // the eval pass exact,fuzzy,...): it keeps its saved switch unless named.
+    const wanted = override ? (override.has(name) || (name === "best" && cfg.best.on)) : cfg[name].on;
     if (!wanted) { on[name] = false; continue; }
-    if (name === "fuzzy") { on[name] = true; continue; }
+    if (name === "fuzzy" || name === "best") { on[name] = true; continue; }
     on[name] = Boolean(cfg[name].model && keyForProvider(providerOf(cfg[name].model)).key);
   }
   return on;
@@ -51,6 +54,9 @@ async function cachedStats() {
   statsCache = { at: Date.now(), value: await indexStats() };
   return statsCache.value;
 }
+
+// After a wipe or a drop: the "is anything indexed" answer must be read again.
+export function forgetSearchCache() { statsCache = { at: 0, value: null }; }
 
 export async function search(query, opts = {}) {
   const { limit = 5, dateFormat = "mdy", tables = null, stageOverride = null, phase = "exact", tablesCfg = {}, labels = {} } = opts;
@@ -73,7 +79,7 @@ export async function search(query, opts = {}) {
   let result = { ...base, ...exact.out, stages: { fuzzy: exact.fuzzyInfo, ...(pending.length ? { pending } : {}) } };
   if (phase === "exact" || !pending.length) {
     result.timings = { ...exact.timings, totalMs: Date.now() - t0 };
-    result.best = deterministicBest(result);
+    result.best = on.best ? await deterministicBest(result) : null;
     return result;
   }
   const ai = await runAi(query, exact, { limit, dateFormat, tables, on: { ...on, understand: pending.includes("understand"), rerank: pending.includes("rerank"), semantic: pending.includes("semantic") }, tablesCfg, labels });
@@ -286,7 +292,11 @@ async function runAi(query, exact, { limit, dateFormat, tables, on, tablesCfg, l
       // floor only says whether they are "Semantic matches" or "Perhaps
       // you meant", and that flag rides along as `weak`.
       const floor = Number(cfg.semantic.minSim) || 0.4;
-      const rows = await vectorSearch(v, vectorKey(), { perTable: limit, minSim: 0, tables });
+      // Only the tables whose semantic switch is on (the others have no vectors,
+      // or none worth searching), inside the person's own tables filter.
+      const semTables = semanticTables(tablesCfg);
+      const vecTables = tables ? tables.filter((t) => semTables.includes(t)) : semTables;
+      const rows = vecTables.length ? await vectorSearch(v, vectorKey(), { perTable: limit, minSim: 0, tables: vecTables }) : [];
       const shown = new Set(current.out.merged.map((m) => `${m.table}\u0000${m.id}`));
       const top = rows.reduce((a, r) => Math.max(a, Number(r.sim)), 0);
       const byTable = new Map();
@@ -319,7 +329,9 @@ async function runAi(query, exact, { limit, dateFormat, tables, on, tablesCfg, l
 
   // The decision: reorder the short list, and name one best match only when
   // the model is sure. Without the stage, the deterministic rule decides.
-  let best = deterministicBest(out);
+  // The plain rule runs only while the Best match switch is on; with it off
+  // the AI stage may still reorder the list, but no record is ever marked.
+  let best = on.best ? await deterministicBest(out) : null;
   if (pRerank) {
     const r = await pRerank;
     if (r.skipped) info.rerank = { ran: false, skipped: r.skipped };
@@ -334,10 +346,10 @@ async function runAi(query, exact, { limit, dateFormat, tables, on, tablesCfg, l
       out.groups.sort((a, b) => rankOf(a.table, a.results[0]?.id) - rankOf(b.table, b.results[0]?.id));
       out.merged = out.merged.slice().sort((a, b) => rankOf(a.table, a.id) - rankOf(b.table, b.id));
       const threshold = Number(cfg.rerank.oneThreshold) || 0.85;
-      if (r.best !== null && r.confidence >= threshold) {
+      if (on.best && r.best !== null && r.confidence >= threshold) {
         const c = candidates[r.best];
         best = { table: c.table, id: c.id, confidence: Math.round(r.confidence * 100) / 100, why: r.why || "the model is confident", by: "rerank" };
-      } else if (r.best !== null && best && (best.table !== candidates[r.best].table || best.id !== candidates[r.best].id)) {
+      } else if (on.best && r.best !== null && best && (best.table !== candidates[r.best].table || best.id !== candidates[r.best].id)) {
         best = null; // the two rules disagree: no single answer
       }
       info.rerank = { ran: true, ms: r.ms, cached: Boolean(r.cached), best: r.best !== null ? { table: candidates[r.best].table, id: candidates[r.best].id } : null, confidence: r.confidence, why: r.why };
@@ -348,11 +360,15 @@ async function runAi(query, exact, { limit, dateFormat, tables, on, tablesCfg, l
   return { out, stages: info, timings };
 }
 
-// One clear answer without a model: the search names one thing, exactly one
-// record carries every word in its name, and the next record is well
-// behind; or the kind is an identifier (email, phone, a number) and exactly
-// one record carries it. A tie means a list, never a guess.
-function deterministicBest(result) {
+// The best match is a clear gap, not a word rule (Matt, 2026-11-20): for words,
+// the top result is the best match when every typed word matches it (a word
+// START counts: "ram" matches "Ramen") and it stands clear of the pack: there
+// is no second result, or the second scores under BEST_GAP of the first. Or
+// one name is the typed words with a slip and nothing else comes close. For an
+// identifier (email, phone, a number): exactly one record carries it. A tie
+// means a list, never a guess. Every answer says who picked it: `by`.
+export const BEST_GAP = 0.7;
+export async function deterministicBest(result) {
   const merged = result.merged || [];
   if (!merged.length) return null;
   const exact = merged.filter((m) => m.via === "exact");
@@ -368,18 +384,23 @@ function deterministicBest(result) {
       }
       return null;
     }
-    const allInTitle = (m) => (m.why || []).length >= (result.words || []).length && (m.why || []).every((w) => w.endsWith("in the title"));
     const top = exact.slice().sort((a, b) => b.score - a.score);
     const first = top[0], second = top[1];
-    if (!allInTitle(first)) return null;
+    // Every typed word (or its name-table form) starts a word of what the
+    // record shows. A word typed with = must be a whole word, one with * may
+    // sit inside a word.
+    const shown = normalizeText(Object.values(first.display || {}).join(" "));
+    const title = normalizeText(String(Object.values(first.display || {})[0] ?? ""));
+    const terms = result.plan?.terms || [];
+    const matches = (t) => [t.word, ...(t.also || [])].some((w) => (t.mode === "whole" ? shown.includes(` ${w} `) : t.mode === "contains" ? shown.includes(w) : shown.includes(` ${w}`)));
+    if (terms.length ? !terms.every(matches) : !(result.words || []).every((w) => shown.includes(` ${w}`))) return null;
     // A name is short. A record whose "title" is a paragraph (a product
     // listed by its blurb) carries any two words, and that is no answer.
-    if (normalizeText(String(Object.values(first.display || {})[0] ?? "")).split(" ").filter(Boolean).length > 8) return null;
-    if (second && second.score >= first.score - 2) return null;
-    const title = normalizeText(String(Object.values(first.display || {})[0] ?? ""));
-    const starts = title === phrase || title.startsWith(phrase + " ");
+    if (title.split(" ").filter(Boolean).length > 8) return null;
+    if (second && !(second.score < BEST_GAP * first.score)) return null;
+    const starts = title.trim() === phrase || title.trim().startsWith(phrase + " ");
     return { table: first.table, id: first.id, confidence: starts ? 0.9 : 0.8,
-      why: starts ? "the only record whose name starts with what you typed" : "the only record with every word in its name", by: "exact" };
+      why: second ? `every word matches, and the next record scores under ${Math.round(BEST_GAP * 100)}% of it` : "every word matches, and no other record does", by: "exact" };
   }
   if (["email", "phone", "number"].includes(result.kind) && exact.length === 1 && merged.length === 1) {
     return { table: exact[0].table, id: exact[0].id, confidence: 0.9, why: `the only record with that ${result.kind === "number" ? "number" : result.kind}`, by: "exact" };

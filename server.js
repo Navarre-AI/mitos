@@ -5,15 +5,17 @@
 
 import "./env.js";
 import express from "express";
+import crypto from "crypto";
 import fs from "fs";
 import os from "os";
 import path from "path";
 import { fileURLToPath } from "url";
-import { fmConfigured, fmConnection, setConnection, withConnection, checkAuth, listDatabases, fetchSchema, fetchCounts, sampleRows, fmReason } from "./fm.js";
-import { indexStats, stageStats, sql, storeExists, ensureIndexTable, vectorSearch, passEstimate, clearEnrichment, freeDiskBytes, totalDiskBytes } from "./store.js";
-import { buildIndex, indexManifest, isBuilding, tablesConfig, MITOS_JSON_FIELD, refreshRecords } from "./indexer.js";
-import { search } from "./search.js";
-import { namingInfo, keyStatus, isEmbeddingModel, askModel, roleModels, PROVIDERS, STAGE_NAMES, STAGE_DEFAULTS, STAGE_LIMITS, stages, stageReady, keyForProvider, providerOf, modelId, chat, estimateCost, EMBED_CAP_PER_SYNC, modelListCache, refreshModelList, ensureModelList } from "./ai.js";
+import { fmConfigured, fmConnection, setConnection, resetConnection, withConnection, checkAuth, listDatabases, fetchSchema, fetchCounts, sampleRows, fmReason } from "./fm.js";
+import { indexStats, stageStats, sql, storeExists, ensureIndexTable, vectorSearch, passEstimate, clearEnrichment, freeDiskBytes, totalDiskBytes, storeManifest, dropTableCopies, wipeCopies, wipeIndex, wipeNotes, wipeAllLocalData, deleteAllVectors, deleteTableVectors, vectorTotals } from "./store.js";
+import { buildIndex, indexManifest, isBuilding, isRefreshing, tablesConfig, MITOS_JSON_FIELD, refreshRecords } from "./indexer.js";
+import { semanticOn, semanticTables } from "./semantic.js";
+import { search, forgetSearchCache } from "./search.js";
+import { namingInfo, keyStatus, isEmbeddingModel, askModel, roleModels, PROVIDERS, STAGE_NAMES, STAGE_DEFAULTS, STAGE_LIMITS, stages, stageReady, keyForProvider, providerOf, modelId, chat, estimateCost, EMBED_CAP_PER_SYNC, modelListCache, refreshModelList, ensureModelList, RECOMMENDED_JOB, autoModel, modelsView, curatedReady, refreshCurated, curatedStatus, refreshAllModels } from "./ai.js";
 import { vectorKey, embedInfo, embedQuery } from "./embed.js";
 import { defaultEnrichPrompt, promptFor, enrichKeyFor, enrichPreview, readPasses } from "./stages.js";
 import { understand, clearUnderstandCache } from "./understand.js";
@@ -38,6 +40,7 @@ const VERSION = (() => {
 })();
 const PORT = Number(process.env.PORT || 8080);
 const SITE_PASSWORD = process.env.SITE_PASSWORD || "";
+const GATE = Boolean(SITE_PASSWORD); // false: no sign-in, no sessions, no Sign out
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
@@ -103,31 +106,187 @@ function saveFmConnection(fm) {
 
 const app = express();
 
-// Password gate (same as the sibling apps): if SITE_PASSWORD is set, the whole
-// site requires it. Accepted three ways so it works in a browser AND a
-// FileMaker web viewer (which cannot answer a Basic-auth prompt):
-//   1. ?key=<password> in the URL  -> also drops a cookie for later calls.
-//   2. a mitos_auth cookie (set by #1).
-//   3. HTTP Basic (browser prompt / curl -u).
+// Password gate: if SITE_PASSWORD is set, the whole site requires it.
+//
+// People sign in on a page: the bare address shows one key field, and a
+// right key gets a session cookie holding a random token (never the key).
+// The key never sits in a URL, a script or a layout, so a Save as XML or a
+// DDR of the FileMaker file has nothing to give away.
+//
+// Machines (a FileMaker Server schedule waking the sync, Insert from URL,
+// curl, the eval scripts) may still use ?key= or HTTP Basic on /api/.
+// A page load with the right ?key= signs in like the sign-in page does and
+// is sent on to the same address without the key.
+// Danger zone, "Sign everyone out": the gate below fills this in. With no
+// SITE_PASSWORD there are no sessions and it is a no-op.
+let wipeSessions = () => 0;
 if (SITE_PASSWORD) {
-  const cookieVal = `mitos_auth=${encodeURIComponent(SITE_PASSWORD)}`;
+  const SESSIONS_PATH = path.join(DATA_DIR, "sessions.json");
+  const SESSION_DAYS = 30;
+  const hashToken = (t) => crypto.createHash("sha256").update(t).digest("hex");
+  // { sha256(token): createdAtMs }. Only hashes are stored, so the file is no
+  // use to someone who reads the volume.
+  let sessions = {};
+  try { sessions = JSON.parse(fs.readFileSync(SESSIONS_PATH, "utf8")); } catch {}
+  const saveSessions = () => {
+    const cutoff = Date.now() - SESSION_DAYS * 864e5;
+    for (const [h, t] of Object.entries(sessions)) if (t < cutoff) delete sessions[h];
+    try { fs.writeFileSync(SESSIONS_PATH, JSON.stringify(sessions)); } catch {}
+  };
+  const keyMatches = (given) => {
+    const a = crypto.createHash("sha256").update(String(given ?? "")).digest();
+    const b = crypto.createHash("sha256").update(SITE_PASSWORD).digest();
+    return crypto.timingSafeEqual(a, b);
+  };
+  const readCookie = (req, name) => {
+    for (const c of (req.headers.cookie || "").split(";")) {
+      const i = c.indexOf("=");
+      if (i > 0 && c.slice(0, i).trim() === name) return decodeURIComponent(c.slice(i + 1).trim());
+    }
+    return "";
+  };
+  const sessionOk = (req) => {
+    const t = readCookie(req, "mitos_session");
+    if (!t) return false;
+    const at = sessions[hashToken(t)];
+    return !!at && at > Date.now() - SESSION_DAYS * 864e5;
+  };
+  const isHttps = (req) => req.secure || req.headers["x-forwarded-proto"] === "https";
+  // Only a same-site path may be the place to land after signing in.
+  const safeNext = (n) => (typeof n === "string" && n.startsWith("/") && !n.startsWith("//") && !n.startsWith("/\\")) ? n : "/";
+  // Wrong keys: five in ten minutes from one address, then that address
+  // waits a minute after its last wrong key (and again after each one more).
+  const misses = new Map();
+  const tooMany = (ip) => {
+    const now = Date.now();
+    const list = (misses.get(ip) || []).filter((t) => t > now - 10 * 60e3);
+    misses.set(ip, list);
+    return list.length >= 5 && now - list[list.length - 1] < 60e3;
+  };
+  const missKey = (ip) => { if (!misses.has(ip)) misses.set(ip, []); misses.get(ip).push(Date.now()); };
+  const TOO_MANY = "Too many tries. Wait a minute and try again.";
+  // A signed-in session: a random token in a cookie, only its hash on disk.
+  const startSession = (req, res) => {
+    const token = crypto.randomBytes(32).toString("base64url");
+    sessions[hashToken(token)] = Date.now();
+    saveSessions();
+    res.setHeader("Set-Cookie", `mitos_session=${token}; Path=/; Max-Age=${SESSION_DAYS * 86400}; SameSite=Lax; HttpOnly${isHttps(req) ? "; Secure" : ""}`);
+  };
+  wipeSessions = (req, res) => {
+    const n = Object.keys(sessions).length;
+    sessions = {};
+    saveSessions();
+    res.setHeader("Set-Cookie", `mitos_session=; Path=/; Max-Age=0; SameSite=Lax; HttpOnly${isHttps(req) ? "; Secure" : ""}`);
+    return n;
+  };
+  const clientIp = (req) => String(req.headers["fly-client-ip"] || req.headers["x-forwarded-for"] || req.socket.remoteAddress || "").split(",")[0].trim();
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+  const signinPage = (next, message) => `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mitos</title>
+<style>
+  :root { --bg:#f6f7f8; --panel:#ffffff; --text:#1c2328; --dim:#5f6b76; --accent:#b8821f; --on-accent:#1c2328; --line:#d9dee3; --warn:#c2621f; color-scheme:light; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#101418; --panel:#1a2027; --text:#e6e9ec; --dim:#8b96a0; --accent:#d9a441; --on-accent:#101418; --line:#2a323b; --warn:#d98041; color-scheme:dark; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center; padding:16px;
+         background:var(--bg); color:var(--text); font:15px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+  form { width:100%; max-width:340px; background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:24px; }
+  h1 { margin:0 0 4px; font-size:20px; font-weight:600; }
+  p { margin:0 0 16px; color:var(--dim); }
+  input { width:100%; padding:10px 12px; font:inherit; color:var(--text); background:var(--bg); border:1px solid var(--line); border-radius:6px; }
+  input:focus { outline:2px solid var(--accent); outline-offset:1px; }
+  button { margin-top:12px; width:100%; padding:10px; font:inherit; font-weight:600; color:var(--on-accent); background:var(--accent); border:0; border-radius:6px; cursor:pointer; }
+  .msg { margin:12px 0 0; color:var(--warn); }
+</style></head>
+<body>
+<form method="post" action="/signin">
+  <h1>Mitos</h1>
+  <p>Enter your key to search.</p>
+  <input type="password" name="key" autocomplete="current-password" aria-label="Key" autofocus required>
+  <input type="hidden" name="next" value="${esc(next)}">
+  <button type="submit">Sign in</button>
+  ${message ? `<p class="msg" role="alert">${esc(message)}</p>` : ""}
+</form>
+</body></html>`;
+
+  const signinHeaders = (res) => res.set({ "Cache-Control": "no-store", "Content-Type": "text/html; charset=utf-8" });
+
+  app.get("/signin", (req, res) => signinHeaders(res).send(signinPage(safeNext(req.query.next), "")));
+  app.post("/signin", express.urlencoded({ extended: false, limit: "4kb" }), (req, res) => {
+    const ip = clientIp(req);
+    const next = safeNext(req.body?.next);
+    if (tooMany(ip)) return signinHeaders(res).status(429).send(signinPage(next, TOO_MANY));
+    if (!keyMatches(req.body?.key)) {
+      missKey(ip);
+      return signinHeaders(res).status(401).send(signinPage(next, "That key didn't work."));
+    }
+    misses.delete(ip);
+    startSession(req, res);
+    return res.redirect(303, next);
+  });
+  app.get("/signout", (req, res) => {
+    const t = readCookie(req, "mitos_session");
+    if (t) { delete sessions[hashToken(t)]; saveSessions(); }
+    res.setHeader("Set-Cookie", `mitos_session=; Path=/; Max-Age=0; SameSite=Lax; HttpOnly${isHttps(req) ? "; Secure" : ""}`);
+    return res.redirect(303, "/signin");
+  });
+
   app.use((req, res, next) => {
-    if (req.query.key === SITE_PASSWORD) {
-      const secure = req.secure || req.headers["x-forwarded-proto"] === "https" ? "; Secure" : "";
-      res.setHeader("Set-Cookie", `${cookieVal}; Path=/; Max-Age=2592000; SameSite=Lax; HttpOnly${secure}`);
-      return next();
+    const isApi = req.path.startsWith("/api/");
+    // A page load with the right ?key= signs in, the same as the sign-in
+    // page, and lands on the same address without the key. (An old address
+    // with the key in it, a bookmark, a FileMaker web viewer URL.) A wrong
+    // key counts like a wrong key on the sign-in page.
+    if (!isApi && req.query.key !== undefined) {
+      const u = new URL(req.originalUrl, "http://x");
+      u.searchParams.delete("key");
+      const here = u.pathname + u.search;
+      const ip = clientIp(req);
+      if (tooMany(ip)) return signinHeaders(res).status(429).send(signinPage(safeNext(here), TOO_MANY));
+      if (keyMatches(req.query.key)) {
+        misses.delete(ip);
+        if (!sessionOk(req)) startSession(req, res);
+        res.set("Cache-Control", "no-store");
+        return res.redirect(303, safeNext(here));
+      }
+      if (sessionOk(req)) return next(); // already signed in; a stale key in the address changes nothing
+      missKey(ip);
+      return signinHeaders(res).status(401).send(signinPage(safeNext(here), "That key didn't work."));
     }
-    const cookies = req.headers.cookie || "";
-    if (cookies.split(";").some((c) => c.trim() === cookieVal)) return next();
-    const header = req.headers.authorization || "";
-    if (header.startsWith("Basic ")) {
-      const decoded = Buffer.from(header.slice(6), "base64").toString("utf8");
-      if (decoded.slice(decoded.indexOf(":") + 1) === SITE_PASSWORD) return next();
+    if (sessionOk(req)) return next();
+    if (isApi) {
+      // A key in ?key= or in Basic auth, from a script. Wrong ones count like
+      // wrong keys on the sign-in page, and the same pause applies.
+      let given;
+      if (req.query.key !== undefined) given = req.query.key;
+      else {
+        const header = req.headers.authorization || "";
+        if (header.startsWith("Basic ")) {
+          const decoded = Buffer.from(header.slice(6), "base64").toString("utf8");
+          given = decoded.slice(decoded.indexOf(":") + 1);
+        }
+      }
+      if (given !== undefined) {
+        const ip = clientIp(req);
+        if (tooMany(ip)) return res.status(429).json({ error: TOO_MANY });
+        if (keyMatches(given)) { misses.delete(ip); return next(); }
+        missKey(ip);
+      }
+      return res.status(401).json({ error: "Not signed in.", signin: "/signin" });
     }
-    res.set("WWW-Authenticate", 'Basic realm="Mitos"');
-    return res.status(401).send("Authentication required. Load with ?key=<password> in a web viewer.");
+    // A page: send the person to sign in, then back to where they were going.
+    // A ?key= on the address is dropped from where they land.
+    const u = new URL(req.originalUrl, "http://x");
+    u.searchParams.delete("key");
+    return res.redirect(303, `/signin?next=${encodeURIComponent(u.pathname + u.search)}`);
   });
 }
+
+// No site password, no sign-in: the sign-in and sign-out addresses go home.
+if (!SITE_PASSWORD) app.get(["/signin", "/signout"], (_req, res) => res.redirect(303, "/"));
 
 // No caching: FileMaker web viewers cache aggressively.
 app.use((_req, res, next) => {
@@ -231,11 +390,18 @@ noteCrashAtBoot();
 // was still pulling, so Cancel flipped a flag the running build could not see
 // and the sync ran on for minutes saying "cancelling" (2026-08-31).
 let cancelFlag = false;
+// True while a sync (or a one-record refresh) holds the local data. The wipes
+// and drops refuse then; `wiping` also keeps a sync from starting under one.
+let wiping = false;
+const syncRunning = () => Boolean((syncJob && !syncJob.done) || isBuilding());
+const SYNC_BUSY = "A sync is running. Cancel it first.";
 
-function startSyncJob({ origin = "user", full = false, stagesOnly = false } = {}) {
+function startSyncJob({ origin = "user", full = false, stagesOnly = false, rebuild = false, fromScratch = false } = {}) {
   // Two guards, because they catch different things: an unfinished job record,
   // and an engine that is still running under a job record that already died.
+  if (isRefreshing()) return null; // a record refresh holds the data: the caller says so
   if ((syncJob && !syncJob.done) || isBuilding()) return syncJob;
+  if (wiping) return syncJob;
   cancelFlag = false;
   syncJob = {
     id: Math.random().toString(36).slice(2, 10),
@@ -247,7 +413,7 @@ function startSyncJob({ origin = "user", full = false, stagesOnly = false } = {}
   // denominator. A table without one shows the count read so far.
   const expected = {};
   for (const t of (readScan()?.tables || [])) if (t.rowCount != null) expected[t.name] = t.rowCount;
-  buildIndex({ onEvent: jobEmit, shouldStop: () => cancelFlag, expected, full, stagesOnly })
+  buildIndex({ onEvent: jobEmit, shouldStop: () => cancelFlag, expected, full, stagesOnly, rebuild, fromScratch })
     .then(() => { job.done = true; jobEmit(cancelFlag ? { type: "stopped" } : { type: "finished" }); })
     .catch((e) => {
       job.done = true;
@@ -306,8 +472,43 @@ app.get("/api/health", async (_req, res) => {
     ...VERSION,
     fm: fmConfigured(),
     building: isBuilding(),
+    gate: GATE,
     indexRows: stats.totalRows,
     naming: namingInfo(),
+  });
+});
+
+// What this machine is, for Settings, Settings tab. Memory and disk in bytes.
+function memoryNow() {
+  const num = (f) => { try { const t = fs.readFileSync(f, "utf8").trim(); return t === "max" ? null : Number(t); } catch { return null; } };
+  let used = null, total = null;
+  try {
+    const mi = fs.readFileSync("/proc/meminfo", "utf8");
+    const kb = (k) => Number((mi.match(new RegExp(`^${k}:\\s+(\\d+)`, "m")) || [])[1] || 0);
+    if (kb("MemTotal") && kb("MemAvailable")) { used = (kb("MemTotal") - kb("MemAvailable")) * 1024; total = kb("MemTotal") * 1024; }
+  } catch { /* not linux */ }
+  if (used === null) used = process.memoryUsage().rss;
+  const limit = num("/sys/fs/cgroup/memory.max") ?? num("/sys/fs/cgroup/memory/memory.limit_in_bytes");
+  // A cgroup limit below the machine's memory is the real ceiling.
+  if (limit && limit < 1e15 && (!total || limit < total)) total = limit;
+  return { memUsed: used, memTotal: total || os.totalmem() };
+}
+app.get("/api/about", (_req, res) => {
+  let diskUsed = null, diskTotal = null;
+  try { const st = fs.statfsSync(DATA_DIR); diskTotal = Number(st.blocks) * Number(st.bsize); diskUsed = (Number(st.blocks) - Number(st.bfree)) * Number(st.bsize); } catch {}
+  const sm = storeManifest();
+  res.json({
+    version: VERSION.version, built: VERSION.built,
+    gate: GATE,
+    region: process.env.FLY_REGION || null,
+    machine: process.env.FLY_MACHINE_ID || null,
+    image: process.env.FLY_IMAGE_REF || null,
+    ...memoryNow(),
+    cpus: os.cpus().length,
+    diskUsed, diskTotal,
+    copyRows: Number(sm.totalRows || 0),
+    copyTables: (sm.tables || []).length,
+    lastSync: indexManifest().builtAt || sm.syncedAt || null,
   });
 });
 
@@ -326,8 +527,10 @@ app.get("/api/config", async (_req, res) => {
   res.json({
     fm: { ...fmConnection(), verifiedAt: cfg.fm?.verifiedAt || null },
     fmConfigured: fmConfigured(),
+    gate: GATE,
     version: VERSION,
-    tables: cfg.tables || null, // null = running on the shipped sample config
+    // null = running on the shipped sample config. Each table's `semantic` is the switch IN EFFECT (the saved one, else the default for its fields).
+    tables: cfg.tables ? Object.fromEntries(Object.entries(cfg.tables).map(([n, t]) => [n, { ...t, semantic: semanticOn(n, t) }])) : null,
     syncEvery: Number(cfg.syncEvery || 0),
     dateFormat: cfg.dateFormat === "dmy" ? "dmy" : "mdy",
     displayNames: displayNamesMap(),
@@ -338,14 +541,25 @@ app.get("/api/config", async (_req, res) => {
     index: { totalRows: stats.totalRows, tables: stats.tables,
              builtAt: indexManifest().builtAt || null, building: isBuilding() },
     ai: { naming: namingInfo(), keys: keyStatus(), hasKey: namingInfo().configured, models: roleModels(),
+          recommended: RECOMMENDED_JOB,
+          defaults: { naming: autoModel("naming"), enrich: autoModel("enrich"), understand: autoModel("understand"),
+                      rerank: autoModel("rerank"), semantic: autoModel("semantic") },
           providers: Object.fromEntries(Object.entries(PROVIDERS).map(([k, p]) => [k, { label: p.label, chat: p.chat, embed: p.embed }])),
           stages: stagesView(), embedding: embedInfo(),
-          coverage: await stageStats(vectorKey()).catch(() => ({ tables: [], totalRows: 0, enriched: 0, embedded: 0 })) },
+          coverage: await coverageView(cfg) },
     enrichPromptDefault: Object.fromEntries(Object.keys(cfg.tables || {}).map((n) => [n, defaultEnrichPrompt(displayNamesMap()[n] || n)])),
     neverSynced: !indexManifest().builtAt && !stats.totalRows,
     hints: hintsSummary(loadHints()),
   });
 });
+
+// Per table: rows, notes, vectors (`vectors`, `vectorBytes` estimated), and the
+// table's semantic switch in effect.
+async function coverageView(cfg) {
+  const c = await stageStats(vectorKey(), embedInfo().dims).catch(() => ({ tables: [], totalRows: 0, enriched: 0, embedded: 0, vectors: 0 }));
+  const tcfg = cfg.tables || tablesConfig();
+  return { ...c, tables: c.tables.map((r) => ({ ...r, semantic: semanticOn(r.src_table, tcfg[r.src_table]) })) };
+}
 
 // The stages as the settings screen shows them: the saved values with the
 // defaults filled in, plus whether each can run right now and why not.
@@ -355,7 +569,11 @@ function stagesView() {
   const out = {};
   for (const name of STAGE_NAMES) {
     const r = stageReady(name);
-    out[name] = { ...s[name], savedModel: saved[name]?.model || "", ready: r.ready, why: r.why || null, provider: s[name].model ? providerOf(s[name].model, name === "semantic" ? "embedding" : "chat") || null : null };
+    out[name] = { ...s[name], savedModel: saved[name]?.model || "", ready: r.ready, why: r.why || null,
+      ...(name in RECOMMENDED_JOB ? { recommendedJob: RECOMMENDED_JOB[name], defaultModel: autoModel(name) } : {}),
+      // semantic: is there an embedding model with a key to switch it on with
+      ...(name === "semantic" ? { available: Boolean(s.semantic.model && providerOf(s.semantic.model, "embedding") && keyForProvider(providerOf(s.semantic.model, "embedding")).key) } : {}),
+      provider: s[name].model ? providerOf(s[name].model, name === "semantic" ? "embedding" : "chat") || null : null };
   }
   return out;
 }
@@ -363,8 +581,33 @@ function stagesView() {
 // Save connection, table config, sync interval, and/or AI keys. Body:
 // { fm?: {host,db,user,pass}, tables?: {...}, syncEvery?: minutes,
 //   ai?: {anthropicKey, openaiKey, namingModel} } - blank keys keep the stored ones.
+// A table entry the save accepts: a key and at least one text field.
+const validTable = (t) => t && t.pk && (t.mitosJson || (Array.isArray(t.textFields) && t.textFields.length));
+// A table sent without its cMitosJSON flag keeps the saved one (the Tables tab
+// does not always send it); an explicit true or false wins.
+const withSavedFlags = (t, prev) => (t && t.mitosJson === undefined && prev?.mitosJson ? { ...t, mitosJson: true } : t);
 app.post("/api/config", async (req, res) => {
   try {
+    // A table that was chosen and is not chosen now loses its local copy. That
+    // cannot happen under a running sync: refuse before anything is saved.
+    let dropNow = [];
+    let vecOff = []; // tables whose semantic switch goes off in this save: their vectors go
+    const savedTables = readConfig().tables || {};
+    const beforeTables = readConfig().tables || tablesConfig(); // what was in effect: a sample install has the shipped tables
+    if (req.body?.tables && typeof req.body.tables === "object") {
+      // A table sent with settings that cannot work is an error naming the
+      // table, never a table that quietly counts as unselected (and loses its copy).
+      const shownName = displayNamesMap();
+      for (const [n, t] of Object.entries(req.body.tables)) {
+        if (!validTable(withSavedFlags(t, savedTables[n]))) return res.status(400).json({ error: `${shownName[n] || savedTables[n]?.displayName || n} has settings Mitos cannot use: it needs a key field and at least one field to search. Fix it in Settings, Tables, or untick it.` });
+      }
+      const keep = new Set(Object.keys(req.body.tables));
+      if (keep.size) dropNow = Object.keys(savedTables).filter((n) => !keep.has(n));
+      vecOff = Object.entries(req.body.tables).filter(([n, t]) => t && t.semantic === false && !dropNow.includes(n) && semanticOn(n, beforeTables[n])).map(([n]) => n);
+      if ((dropNow.length || vecOff.length) && (syncRunning() || wiping)) return res.status(409).json({ error: SYNC_BUSY });
+    }
+    let dropped = [];
+    let vectorsDeleted = {};
     if (req.body?.fm && typeof req.body.fm === "object") {
       // A NEW login (a password, or a changed host or user) is proven against
       // one real file before it is saved. On 2026-09-09 a password manager
@@ -446,6 +689,12 @@ app.post("/api/config", async (req, res) => {
           if (name !== "semantic" && patch.model && isEmbeddingModel(patch.model)) {
             return res.status(400).json({ error: `"${String(patch.model).trim()}" is an embedding model. Choose a chat model for ${name === "enrich" ? "enrichment" : name}.` });
           }
+          // Semantic search cannot be switched on with no embedding model to run it.
+          if (name === "semantic" && patch.on === true) {
+            const m = (patch.model !== undefined ? String(patch.model || "").trim() : cur.model) || autoModel("semantic");
+            const p = m ? providerOf(m, "embedding") : "";
+            if (!p || !keyForProvider(p).key) return res.status(400).json({ error: "No embedding model found. Add a Google, OpenAI or Voyage key, or refresh the model list." });
+          }
           for (const [k, v] of Object.entries(patch)) {
             if (!(k in STAGE_DEFAULTS[name])) continue;
             if (k === "on") cur.on = Boolean(v);
@@ -462,6 +711,14 @@ app.post("/api/config", async (req, res) => {
         clearUnderstandCache(); // a model or prompt change must not serve old plans
       }
       writeConfig(cfg);
+      // A key just saved or forgotten: the model lists are read again at once
+      // (the public list if it is stale, the provider lists always), so the
+      // menus and the semantic row are right when the page asks next.
+      if (Object.values(PROVIDERS).some((p) => req.body.ai[p.cfgKey] !== undefined && req.body.ai[p.cfgKey] !== "")) {
+        let timer;
+        await Promise.race([refreshAllModels(), new Promise((r) => { timer = setTimeout(r, 12000); })]);
+        clearTimeout(timer);
+      }
     }
     if (req.body?.displayNames && typeof req.body.displayNames === "object") {
       // A rename saves itself (Matt lost one to a closed panel, Pythia
@@ -480,7 +737,7 @@ app.post("/api/config", async (req, res) => {
       const tables = {};
       const names = displayNamesMap(), proposed = slugMap();
       const wordOf = {}; // slug -> the table that holds it, within this save
-      const entries = Object.entries(req.body.tables).filter(([, t]) => t && t.pk && (t.mitosJson || (Array.isArray(t.textFields) && t.textFields.length)));
+      const entries = Object.entries(req.body.tables).map(([n, t]) => [n, withSavedFlags(t, savedTables[n])]);
       // Typed words first, so a word a person chose is never pushed aside by
       // one Mitos made up.
       entries.sort(([, a], [, b]) => Number(Boolean(String(b.slug || "").trim())) - Number(Boolean(String(a.slug || "").trim())));
@@ -514,6 +771,7 @@ app.post("/api/config", async (req, res) => {
           ...(t.displayName ? { displayName: String(t.displayName) } : {}),
           slug: t.slug,
           ...(t.mitosJson ? { mitosJson: true } : {}),
+          ...(typeof t.semantic === "boolean" ? { semantic: t.semantic } : typeof savedTables[name]?.semantic === "boolean" ? { semantic: savedTables[name].semantic } : {}),
           textFields: t.textFields.map(String),
           displayFields: (Array.isArray(t.displayFields) && t.displayFields.length ? t.displayFields : t.textFields.slice(0, 4)).map(String),
           ...(enrich ? { enrich } : {}),
@@ -524,8 +782,10 @@ app.post("/api/config", async (req, res) => {
       cfg.tables = tables;
       cfg.savedAt = new Date().toISOString();
       writeConfig(cfg);
+      if (dropNow.length) { dropped = await dropTableCopies(dropNow); forgetSearchCache(); }
+      for (const n of vecOff) vectorsDeleted[n] = (await deleteTableVectors([n])).deleted;
     }
-    res.json({ ok: true, fm: fmConnection(), tables: readConfig().tables || null });
+    res.json({ ok: true, fm: fmConnection(), tables: readConfig().tables || null, dropped, vectorsDeleted });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -670,7 +930,11 @@ app.get("/api/fm/scan/progress", (_req, res) => {
 function mergeSaved(scan) {
   const saved = readConfig().tables || {};
   const names = displayNamesMap(), slugs = slugMap();
+  // FileMaker's count as the last sync saw it beats the scan's, which is only
+  // as fresh as the last scan (months old on a long-running box).
+  const synced = Object.fromEntries((storeManifest().tables || []).map((m) => [m.name, m.remoteCount]));
   for (const t of scan.tables) {
+    if (Number.isFinite(Number(synced[t.name])) && synced[t.name] !== null) t.rowCount = Number(synced[t.name]);
     t.included = Boolean(saved[t.name]);
     if (saved[t.name]) t.proposal = saved[t.name];
     // The one name map and the one word map: what /api/config says, this
@@ -752,7 +1016,7 @@ async function buildScan(refresh) {
       const named = (re) => t.fields.find((f) => re.test(f.name))?.name;
       const isRowId = (n) => /^rowid$/i.test(String(n || ""));
       const declared = (t.keys || []).find((k) => !isRowId(k)) || null;
-      const pk = named(/uuid|guid/i)
+      let pk = named(/uuid|guid/i)
         || declared
         || named(/^id$/i)
         || named(/^pk\b|^id[_ ]/i)
@@ -760,8 +1024,10 @@ async function buildScan(refresh) {
       // True when the ONLY thing FileMaker offered was ROWID: the table has no
       // unique, not-empty field at all. Say so plainly; it is a schema fact,
       // not a Mitos limitation.
-      const rowIdOnly = Boolean((t.keys || []).length && (t.keys || []).every(isRowId) && !pk);
+      // The SaXML hint comes first: a key the export names is a key, so a table
+      // whose only OData key is ROWID is not "rowIdOnly" when the hint has one.
       if (!pk && t.hintPk && t.fields.some((f) => f.name === t.hintPk)) pk = t.hintPk;
+      const rowIdOnly = Boolean((t.keys || []).length && (t.keys || []).every(isRowId) && !pk);
       const modField = t.modField || t.fields.find((f) => f.type === "DateTimeOffset" && /mod/i.test(f.name))?.name || null;
       // Field hygiene by NAME and by METADATA, no rows read: summaries,
       // globals, and calculations that are not known to store their result
@@ -935,16 +1201,27 @@ app.get("/api/disk", (_req, res) => {
   catch (e) { res.json({ freeBytes: null, error: String(e.message || e) }); }
 });
 
-// Live model lists, straight from the providers (ai.js refreshModelList):
-// every enabled provider's chat and embedding models, newest first, cached
-// for a day. No list is baked in and none is trimmed by model name; when a
-// provider cannot be reached its last good list stays. Other... in every
-// picker takes an id the list does not show.
+// The model list: navarre.ai/ai-models.json (ai.js), kept current by a daily
+// job on his site. It decides what the menus show, each model's job and its
+// price, and what each stage defaults to. Each model says whether its provider
+// has a key (`usable`). The providers' own live lists only fill in what the
+// public list lacks (OpenAI's embedding models) and say which ids a key can
+// reach. A copy on the volume is never waited on; with none, the first answer
+// waits up to 2 seconds for the fetch. ?refresh=1 reads both lists now.
 app.get("/api/ai/models", async (req, res) => {
-  const cached = modelListCache();
-  if (req.query.refresh !== "1" && cached && Date.now() - Date.parse(cached.at) < 86400000) return res.json(cached);
-  try { res.json(await refreshModelList()); }
-  catch (e) { res.json({ ...(cached || { models: [] }), errors: [String(e.message || e)] }); }
+  const errors = [];
+  try {
+    if (req.query.refresh === "1") {
+      const r = await Promise.all([refreshCurated(true).catch((e) => { errors.push(String(e.message || e)); return null; }), refreshModelList().catch((e) => { errors.push(String(e.message || e)); return null; })]);
+      if (!r[0] || curatedStatus().error) errors.push(`The public model list could not be read (${curatedStatus().error || "no answer"}); showing the last copy.`);
+      if (r[1]?.errors) errors.push(...r[1].errors);
+    } else {
+      await curatedReady(2000);
+      const live = modelListCache();
+      if (!live || Date.now() - Date.parse(live.at) > 86400000) refreshModelList().catch(() => {}); // for Other... and the embedding fill-in, not waited on
+    }
+  } catch (e) { errors.push(String(e.message || e)); }
+  res.json({ ...modelsView(), ...(errors.length ? { errors } : {}) });
 });
 
 // Prove an AI key works before relying on it: one tiny real call.
@@ -979,8 +1256,8 @@ app.post("/api/ai/test", async (req, res) => {
       return res.json({ ok: true, provider });
     }
     if (which === "naming") {
-      const r = await askModel("Reply with the single word: ok", "ping", 20);
-      return res.json({ ok: Boolean(r), note: `answered (${namingInfo().model})` });
+      const r = await askModel("Reply with the single word: ok", "ping", 200);
+      return res.json(r && r.trim() ? { ok: true, note: `answered (${namingInfo().model})` } : { ok: false, error: `${namingInfo().model} answered with nothing. Try again, or pick a different model.` });
     }
     // One real run of a search stage, timed, so a person can see the stage
     // work and how long its model takes before switching it on for everyone.
@@ -1006,12 +1283,13 @@ app.post("/api/ai/test", async (req, res) => {
     if (which === "enrich") {
       const t0 = Date.now();
       const s = stages().enrich;
-      const text = await chat({ model: s.model, system: defaultEnrichPrompt("Organization") + "\nPlain text only, at most 6 lines.", user: "Name: Acme Systems\nCity: Portland\nState: OR", maxTokens: 200, timeoutMs: 30000 });
-      return res.json({ ok: Boolean(text), ms: Date.now() - t0, note: `sample notes in ${Date.now() - t0} ms: ${String(text).replace(/\s+/g, " ").slice(0, 160)}` });
+      const text = await chat({ model: s.model, system: defaultEnrichPrompt("Organization") + "\nPlain text only, at most 6 lines.", user: "Name: Acme Systems\nCity: Portland\nState: OR", maxTokens: 1000, timeoutMs: 30000 });
+      if (!String(text || "").trim()) return res.json({ ok: false, ms: Date.now() - t0, error: `${s.model} answered with nothing. Try again, or pick a different model.` });
+      return res.json({ ok: true, ms: Date.now() - t0, note: `sample notes in ${Date.now() - t0} ms: ${String(text).replace(/\s+/g, " ").slice(0, 160)}` });
     }
     res.status(400).json({ error: "which must be naming, understand, semantic, rerank or enrich" });
   } catch (e) {
-    res.json({ ok: false, error: String(e.message || e).slice(0, 200) });
+    res.json({ ok: false, error: String(e.message || e).slice(0, 300) });
   }
 });
 
@@ -1087,9 +1365,25 @@ function logSearch(query, result, req) {
     ...(req.query.stages !== undefined ? { stagesOverride: String(req.query.stages).slice(0, 80) } : {}),
   });
 }
+// The first search after a boot warms the paid connections: a TLS handshake
+// to the provider costs seconds the first time (a cold best match missed its
+// budget, 2026-09-08), and one scan of the vectors pulls the vector file into
+// the page cache (5.6 s cold, 2026-09-09). Started beside the search, once.
+let warmed = false;
+function warmOnFirstSearch() {
+  if (warmed) return;
+  warmed = true;
+  if (stageReady("semantic").ready) embedQuery("mitos").then((v) => vectorSearch(v, vectorKey(), { perTable: 1 })).catch(() => {});
+  for (const name of ["understand", "rerank"]) {
+    if (!stageReady(name).ready) continue;
+    chat({ model: stages()[name].model, system: "Reply with the single word: ok", user: "ok", maxTokens: 20, timeoutMs: 15000 }).catch(() => {});
+    break;
+  }
+}
 async function handleSearch(req, res, phase) {
   const query = undouble(req.query.q);
   if (!query) return res.status(400).json({ error: "q is required" });
+  warmOnFirstSearch();
   try {
     const result = await search(query, { ...searchOptions(req), phase });
     // An empty index is a setup state, not a search result. Say so and do not
@@ -1125,10 +1419,19 @@ app.get("/api/index/sample", async (req, res) => {
 
 // { full: true } is the Run button from the paid-pass gate: the stages do
 // every waiting row instead of stopping at their quiet caps.
+const REFRESHING = "Mitos is updating some records. Try again in a moment.";
 app.post("/api/index/sync", (req, res) => {
+  if (isRefreshing()) return res.status(409).json({ error: REFRESHING });
   if (syncJob && !syncJob.done) return res.json({ ok: true, already: true, id: syncJob.id });
-  const job = startSyncJob({ origin: "user", full: Boolean(req.body?.full), stagesOnly: Boolean(req.body?.stagesOnly) });
-  res.json({ ok: true, started: true, id: job.id });
+  if (wiping) return res.status(409).json({ error: "A wipe is running. Try again in a moment." });
+  // { rebuild: true } makes the search index again from the local copies and
+  // reads nothing from FileMaker. { rebuild: true, fromScratch: true } empties
+  // the index first (its search notes and vectors go too).
+  const rebuild = Boolean(req.body?.rebuild);
+  const job = startSyncJob({ origin: "user", full: Boolean(req.body?.full), stagesOnly: rebuild ? false : Boolean(req.body?.stagesOnly), rebuild, fromScratch: rebuild && Boolean(req.body?.fromScratch) });
+  if (!job) return res.status(409).json({ error: REFRESHING });
+  if (job.done) return res.status(409).json({ error: "Mitos is busy. Try again in a moment." });
+  res.json({ ok: true, started: true, id: job.id, ...(rebuild ? { rebuild: true } : {}) });
 });
 
 // What a paid pass would do now: rows waiting for vectors and for notes,
@@ -1141,13 +1444,18 @@ app.get("/api/ai/estimate", async (_req, res) => {
     const tablesCfg = cfg.tables || tablesConfig();
     const enrichKeys = {};
     for (const [name, t] of Object.entries(tablesCfg)) if (t.enrich?.on && s.enrich.on) enrichKeys[name] = enrichKeyFor(s.enrich.model, promptFor(name, t, labels[name]));
-    const est = await passEstimate(vectorKey(), enrichKeys);
+    const semTables = semanticTables(tablesCfg);
+    const est = await passEstimate(vectorKey(), enrichKeys, semTables);
     // Per table, what the index holds: rows, rows with notes, rows with a
     // current vector. The AI tab's lines ("12,400 of 30,649 records have
     // notes") come from these counts, never from the ledger.
-    const held = await stageStats(vectorKey()).catch(() => ({ tables: [] }));
+    const held = await stageStats(vectorKey(), embedInfo().dims).catch(() => ({ tables: [], vectors: 0 }));
     const heldBy = Object.fromEntries(held.tables.map((r) => [r.src_table, { rows: Number(r.rows || 0), notes: Number(r.enriched || 0), vectors: Number(r.embedded || 0) }]));
     const embedModel = s.semantic.model;
+    // Every record of the covered tables, at the average size, for the rebuild price.
+    const coveredRows = held.tables.filter((r) => semTables.includes(r.src_table)).reduce((a, r) => a + Number(r.rows || 0), 0);
+    const avgChars = (await sql(`SELECT avg(length(source_text) + coalesce(length(enrich_text), 0)) AS c FROM mitos_index`).catch(() => [{ c: 0 }]))[0]?.c || 0;
+    const rebuildCost = embedModel ? estimateCost(embedModel, coveredRows, Number(avgChars) / 4 + 8) : 0;
     // `waiting` is the rows the pass would do; `rows` is the table's size.
     const embed = est.embed.map((r) => ({ table: r.table, label: labels[r.table] || r.table, waiting: r.rows, chars: r.chars, rows: heldBy[r.table]?.rows ?? r.rows, vectors: heldBy[r.table]?.vectors ?? 0,
       tokens: Math.round(r.rows * (r.chars / 4 + 8)), cost: estimateCost(embedModel, r.rows, r.chars / 4 + 8) }));
@@ -1160,7 +1468,12 @@ app.get("/api/ai/estimate", async (_req, res) => {
     });
     const sum = (a, k) => Math.round(a.reduce((x, r) => x + Number(r[k] || 0), 0) * 100) / 100;
     res.json({
-      embed: { on: s.semantic.on && stageReady("semantic").ready, model: embedModel, rows: sum(embed, "waiting"), waiting: sum(embed, "waiting"), cost: sum(embed, "cost"), tables: embed, capPerSync: EMBED_CAP_PER_SYNC },
+      // `rows`/`waiting`: records that need a vector now (0 = nothing to build:
+      // the switch just turns on). `totalRows`: records in the tables semantic
+      // search covers. `vectors`/`vectorBytes`: what is stored now. `rebuildCost`:
+      // what building every vector from nothing would cost (the switch-off warning).
+      embed: { on: s.semantic.on && stageReady("semantic").ready, model: embedModel, rows: sum(embed, "waiting"), waiting: sum(embed, "waiting"), cost: sum(embed, "cost"), tables: embed, capPerSync: EMBED_CAP_PER_SYNC,
+        upToDate: sum(embed, "waiting") === 0, totalRows: coveredRows, vectors: held.vectors || 0, vectorBytes: held.vectorFileBytes || 0, rebuildCost },
       enrich: { on: s.enrich.on && stageReady("enrich").ready, model: s.enrich.model, rows: sum(enrich, "waiting"), waiting: sum(enrich, "waiting"), notes: sum(enrich, "notes"), totalRows: sum(enrich, "rows"), cost: sum(enrich, "cost"), tables: enrich, capPerSync: Number(s.enrich.maxRowsPerSync) || 0 },
       passes: readPasses(12),
     });
@@ -1176,6 +1489,24 @@ app.post("/api/ai/enrich/forget", async (req, res) => {
     const cleared = await clearEnrichment(table);
     res.json({ ok: true, table, cleared });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Switching semantic search OFF deletes the vectors: they take room on the Fly
+// volume (Matt, 2026-11-20). The stage is saved off first, then the vector file
+// is removed. Turning it back on rebuilds them (the estimate says what that costs).
+app.post("/api/ai/semantic/off", async (_req, res) => {
+  if (syncRunning() || wiping) return res.status(409).json({ error: SYNC_BUSY });
+  wiping = true;
+  try {
+    const cfg = readConfig();
+    cfg.ai = cfg.ai || {};
+    cfg.ai.stages = cfg.ai.stages || {};
+    cfg.ai.stages.semantic = { ...(cfg.ai.stages.semantic || {}), on: false };
+    writeConfig(cfg);
+    const r = await deleteAllVectors();
+    res.json({ ok: true, deleted: r.deleted, bytesFreed: r.bytesFreed });
+  } catch (e) { res.status(500).json({ error: String(e.message || e) }); }
+  finally { wiping = false; }
 });
 
 // The enrichment window's preview: notes for two sample records per table,
@@ -1202,33 +1533,105 @@ app.post("/api/ai/enrich-preview", async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// The per-record beacon from FileMaker's OnWindowTransaction script:
-//   { "tables": { "D_Org~B": { "changed": [ids], "deleted": [ids] } } }
-// or the flat form { "table": "D_Org~B", "ids": [...], "deleted": [...] }.
-// Ids are primary key values. Mitos pulls those rows over OData, indexes
-// them, and runs the stages on them. A sync in progress answers 202 and
-// the next sync picks the change up by timestamp.
-app.post("/api/records/changed", async (req, res) => {
+// The per-record beacon from FileMaker (Mitos - Record Changed):
+//   { "table": "<raw name or table word>", "id": "<primary key>" }
+// or { table, ids: [...], deleted: [...] } or
+//   { "tables": { "<raw name>": { "changed": [ids], "deleted": [ids] } } }
+// It answers AT ONCE, 202 { queued: true, id }, so the person's commit never
+// waits on the pull, the index step or the stages. The work runs one request
+// at a time after that. Ids for a table that arrive while it is still queued
+// join the same run. A request that arrives during a sync waits for the sync
+// to end. What happened goes to a log (records.jsonl): GET /api/records/log.
+const REC_LOG = "records.jsonl";
+const RECORDS_PER_RUN = 500;
+const recPending = new Map(); // table key -> { table, ids:Set, deleted:Set, reqs:Set }
+let recWorking = false;
+const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
+const logRecords = (entry) => { try { fs.appendFileSync(path.join(DATA_DIR, REC_LOG), JSON.stringify(entry) + "\n"); } catch {} };
+// The raw table name for a name or a table word, or null.
+function resolveTable(name) {
+  const configured = readConfig().tables || tablesConfig();
+  if (configured[name]) return name;
+  const bySlug = Object.entries(slugMap()).find(([raw, slug]) => configured[raw] && slug === name);
+  return bySlug ? bySlug[0] : null;
+}
+function queueRecords(work, reqId) {
+  for (const w of work) {
+    const key = resolveTable(w.table) || w.table;
+    if (!recPending.has(key)) recPending.set(key, { table: key, ids: new Set(), deleted: new Set(), reqs: new Set() });
+    const p = recPending.get(key);
+    for (const id of w.ids) p.ids.add(id);
+    for (const id of w.deleted) p.deleted.add(id);
+    p.reqs.add(reqId);
+  }
+  recWork();
+}
+async function recWork() {
+  if (recWorking) return;
+  recWorking = true;
+  try {
+    while (recPending.size) {
+      if (syncRunning() || wiping) { await sleepMs(1500); continue; }
+      const [key, w] = recPending.entries().next().value;
+      recPending.delete(key);
+      const ids = [...w.ids].slice(0, RECORDS_PER_RUN), deleted = [...w.deleted].slice(0, RECORDS_PER_RUN);
+      // What does not fit in one run goes back to the queue.
+      const restIds = [...w.ids].slice(RECORDS_PER_RUN), restDel = [...w.deleted].slice(RECORDS_PER_RUN);
+      if (restIds.length || restDel.length) { const p = { table: key, ids: new Set(restIds), deleted: new Set(restDel), reqs: new Set(w.reqs) }; recPending.set(key, p); }
+      const entry = { at: new Date().toISOString(), table: key, ids: [...ids, ...deleted.filter((d) => !ids.includes(d))], updated: 0, deleted: 0, notFound: [], error: null, requests: [...w.reqs] };
+      const raw = resolveTable(key);
+      if (!raw) entry.error = `Mitos doesn't search a table called ${key}`;
+      else {
+        try {
+          const r = await refreshRecords({ table: raw, ids, deleted });
+          if (r.deferred) {
+            // A sync began between the check and the start: wait for it.
+            const p = recPending.get(key) || { table: key, ids: new Set(), deleted: new Set(), reqs: new Set() };
+            for (const id of ids) p.ids.add(id);
+            for (const id of deleted) p.deleted.add(id);
+            for (const q of w.reqs) p.reqs.add(q);
+            recPending.set(key, p);
+            await sleepMs(1500);
+            continue;
+          }
+          entry.updated = r.updated; entry.deleted = r.deleted; entry.notFound = r.notFound || [];
+        } catch (e) { entry.error = String(e.message || e).slice(0, 300); }
+      }
+      logRecords(entry);
+      if (!entry.error) forgetSearchCache();
+    }
+  } finally { recWorking = false; }
+}
+app.post("/api/records/changed", (req, res) => {
   const b = req.body || {};
   const work = [];
-  if (b.tables && typeof b.tables === "object") {
-    for (const [table, v] of Object.entries(b.tables)) work.push({ table, ids: [].concat(v?.changed || v?.ids || []), deleted: [].concat(v?.deleted || []) });
-  } else if (b.table) work.push({ table: String(b.table), ids: [].concat(b.ids || b.id || []), deleted: [].concat(b.deleted || []) });
-  if (!work.length) return res.status(400).json({ error: "send { tables: { <raw name>: { changed: [ids], deleted: [ids] } } }" });
-  const configured = readConfig().tables || {};
-  const bySlug = Object.fromEntries(Object.entries(slugMap()).filter(([raw]) => configured[raw]).map(([raw, slug]) => [slug, raw]));
-  const results = [];
+  const listOf = (v) => (v === undefined || v === null ? [] : [].concat(v)).map((x) => (typeof x === "number" ? String(x) : x));
+  const bad = (m) => res.status(400).json({ error: m });
+  if (b.tables && typeof b.tables === "object" && !Array.isArray(b.tables)) {
+    for (const [table, v] of Object.entries(b.tables)) {
+      if (!table.trim() || !v || typeof v !== "object") return bad(`tables.${table}: send { changed: [ids], deleted: [ids] }`);
+      work.push({ table: table.trim(), ids: listOf(v.changed ?? v.ids ?? v.id), deleted: listOf(v.deleted) });
+    }
+  } else if (typeof b.table === "string" && b.table.trim()) {
+    work.push({ table: b.table.trim(), ids: listOf(b.ids ?? b.id), deleted: listOf(b.deleted) });
+  } else return bad('send { "table": "<table>", "id": "<primary key>" } (or ids / deleted lists, or { tables: { <table>: { changed, deleted } } })');
   for (const w of work) {
-    const raw = configured[w.table] ? w.table : bySlug[w.table];
-    if (!raw) { results.push({ table: w.table, error: "not an indexed table" }); continue; }
-    try {
-      const r = await refreshRecords({ table: raw, ids: w.ids.map(String).filter(Boolean).slice(0, 500), deleted: w.deleted.map(String).filter(Boolean).slice(0, 500) });
-      results.push(r);
-      if (r.deferred) return res.status(202).json({ deferred: true, reason: r.reason, results });
-    } catch (e) { results.push({ table: raw, error: String(e.message).slice(0, 200) }); }
+    if (![...w.ids, ...w.deleted].every((x) => typeof x === "string" && x.trim())) return bad(`${w.table}: ids must be non-empty text or numbers`);
+    w.ids = w.ids.map((x) => x.trim()); w.deleted = w.deleted.map((x) => x.trim());
   }
-  appendLog("beacon.jsonl", { ts: new Date().toISOString(), results });
-  res.json({ ok: results.every((r) => !r.error), results });
+  if (!work.some((w) => w.ids.length || w.deleted.length)) return bad("no record id was sent");
+  const id = Math.random().toString(36).slice(2, 10);
+  queueRecords(work, id);
+  res.status(202).json({ queued: true, id });
+});
+// Newest first. { at, table, ids, updated, deleted (records removed from Mitos),
+// notFound (ids FileMaker no longer has), error, requests }.
+app.get("/api/records/log", (req, res) => {
+  const limit = Math.min(Math.max(Number(req.query.limit) || 100, 1), 1000);
+  try {
+    res.json(fs.readFileSync(path.join(DATA_DIR, REC_LOG), "utf8").trim().split("\n").filter(Boolean).slice(-limit)
+      .map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean).reverse());
+  } catch { res.json([]); }
 });
 
 app.get("/api/index/status", async (_req, res) => {
@@ -1239,7 +1642,84 @@ app.get("/api/index/status", async (_req, res) => {
     stats: await indexStats().catch(() => ({ tables: [], totalRows: 0 })),
     tables: Object.keys(tablesConfig()),
     lastCrash: lastCrash(),
+    flyApp: process.env.FLY_APP_NAME || null,
   });
+});
+
+// --- Danger zone ---------------------------------------------------------------
+// Everything here is Mitos's own copy and settings. FileMaker is never
+// touched. All of it refuses while a sync runs.
+const RESET_ITEMS = ["index", "copies", "notes", "config", "keys", "logs", "sessions"];
+const RESET_DEFAULT = ["index", "copies"]; // what a reset always meant
+app.post("/api/reset", async (req, res) => {
+  if (syncRunning() || wiping) return res.status(409).json({ error: SYNC_BUSY });
+  const body = req.body && typeof req.body === "object" ? req.body : {};
+  let items = body.items;
+  if (items === undefined || (Array.isArray(items) && !items.length)) items = RESET_DEFAULT;
+  if (!Array.isArray(items) || !items.every((k) => typeof k === "string" && RESET_ITEMS.includes(k))) {
+    return res.status(400).json({ error: `items must be a list of: ${RESET_ITEMS.join(", ")}.` });
+  }
+  const want = new Set(items);
+  wiping = true;
+  try {
+    // Local data first. Index and copies together leave an empty database
+    // file, which is deleted so the disk comes back.
+    if (want.has("index") && want.has("copies")) await wipeAllLocalData();
+    else {
+      if (want.has("index")) await wipeIndex();
+      if (want.has("copies")) await wipeCopies();
+    }
+    if (want.has("notes") && !want.has("index")) await wipeNotes();
+    if (want.has("index") || want.has("copies") || want.has("notes")) { forgetSearchCache(); clearUnderstandCache(); }
+    const keptOnServer = [];
+    if (want.has("config")) {
+      const cfg = readConfig();
+      delete cfg.fm; delete cfg.tables; delete cfg.displayNames; delete cfg.savedAt;
+      writeConfig(cfg);
+      // What the scan, the hints and the naming cache hold is the old server's.
+      for (const f of ["schema-scan.json", "schema-hints.json", "naming.json"]) { try { fs.unlinkSync(path.join(DATA_DIR, f)); } catch {} }
+      connGen++; scanBuild = null; scanStatus = null;
+      resetConnection();
+      if (fmConfigured() || process.env.FM_HOST) keptOnServer.push("config");
+    }
+    if (want.has("keys")) {
+      const cfg = readConfig();
+      if (cfg.ai) {
+        for (const p of Object.values(PROVIDERS)) delete cfg.ai[p.cfgKey];
+        delete cfg.ai.providers;
+        writeConfig(cfg);
+      }
+      try { fs.unlinkSync(path.join(DATA_DIR, "models.json")); } catch {}
+      if (Object.values(PROVIDERS).some((p) => process.env[p.env])) keptOnServer.push("keys");
+    }
+    if (want.has("logs")) {
+      for (const f of ["searches.jsonl", "clicks.jsonl", "beacon.jsonl", REC_LOG]) { try { fs.unlinkSync(path.join(DATA_DIR, f)); } catch {} }
+      clearUnderstandCache(); // the typed searches it remembers
+    }
+    if (want.has("sessions")) wipeSessions(req, res);
+    res.json({ ok: true, wiped: items, needsSetup: want.has("config"), keptOnServer });
+  } catch (e) {
+    res.status(500).json({ error: String(e.message || e) });
+  } finally { wiping = false; }
+});
+
+// Drop Mitos's copy of one table and untick it, so the next sync does not
+// bring it back. Same code as unticking the table when saving the Tables tab.
+app.post("/api/tables/drop", async (req, res) => {
+  const table = String(req.body?.table || "").trim();
+  if (!table) return res.status(400).json({ error: "table is required" });
+  if (syncRunning() || wiping) return res.status(409).json({ error: SYNC_BUSY });
+  const cfg = readConfig();
+  const known = Boolean(cfg.tables?.[table]) || (storeManifest().tables || []).some((t) => t.name === table);
+  if (!known) return res.status(404).json({ error: "Mitos has no copy of that table." });
+  wiping = true;
+  try {
+    await dropTableCopies([table]);
+    forgetSearchCache();
+    if (cfg.tables && cfg.tables[table]) { delete cfg.tables[table]; cfg.savedAt = new Date().toISOString(); writeConfig(cfg); }
+    res.json({ ok: true, dropped: table });
+  } catch (e) { res.status(500).json({ error: String(e.message || e) }); }
+  finally { wiping = false; }
 });
 
 // --- The search log ----------------------------------------------------------
@@ -1296,7 +1776,7 @@ app.get("/api/log", (req, res) => {
 // awake; an FMS script schedule POSTing /api/index/sync is the reliable clock.
 async function autoSyncTick() {
   const every = Number(readConfig().syncEvery || 0);
-  if (!every || isBuilding() || !fmConfigured()) return;
+  if (!every || isBuilding() || wiping || !fmConfigured()) return;
   const last = indexManifest().builtAt ? Date.parse(indexManifest().builtAt) : 0;
   if (Date.now() - last < every * 60000) return;
   startSyncJob({ origin: "auto-sync" });
@@ -1328,19 +1808,8 @@ app.listen(PORT, async () => {
   } catch (e) {
     console.error("boot check failed:", e.message);
   }
-  // Warm the embedding connection: the first call to a provider pays for
-  // TLS and routing (three seconds measured); the ones after do not. One
-  // tiny query at boot moves that cost off the first person's search.
-  // One vector scan too: it pulls the vector file into the page cache, so
-  // the first search after the machine wakes does not pay the cold read
-  // (5.6 s measured on the demo box, 1 to 3 s warm).
-  if (stageReady("semantic").ready) embedQuery("mitos").then((v) => vectorSearch(v, vectorKey(), { perTable: 1 })).catch(() => {});
-  // The same for the fast chat model: a five-token call opens the
-  // connection the first search would otherwise wait for (a cold rerank
-  // missed its 3-second budget on the demo box, 2026-09-08).
-  for (const name of ["understand", "rerank"]) {
-    if (!stageReady(name).ready) continue;
-    chat({ model: stages()[name].model, system: "Reply with the single word: ok", user: "ok", maxTokens: 5, timeoutMs: 15000 }).catch(() => {});
-    break;
-  }
+  // No AI calls at boot (a boot is not a request, and every deploy reboots the
+  // box). The public model list is read in the background (a free GET); the
+  // providers' models are warmed on the first search instead (warmOnFirstSearch).
+  refreshCurated().catch(() => {});
 });

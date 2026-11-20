@@ -104,7 +104,7 @@ export async function nameTables(tables, { force = false } = {}) {
     await ensureModelList().catch(() => {});
     let usedModel = namingInfo().model;
     let reply;
-    const fast = autoModel("chat", usedModel);
+    const fast = autoModel("enrich", usedModel);
     const payload = JSON.stringify({ tables: summary });
     // An embedding model cannot name anything (a test box had an embedding
     // model saved as the naming model on 2026-09-09): go straight to the

@@ -12,7 +12,7 @@ import { fileURLToPath } from "url";
 import { fmConfigured, fetchSchema, fetchRowsByKeys, fmReason } from "./fm.js";
 import {
   sql, syncTables, loadSampleData, sampleAvailable, sampleUpdatedAt, storeManifest,
-  ensureIndexTable, indexHashes, upsertIndexRows, deleteIndexRows, indexStats, normalizeText,
+  ensureIndexTable, indexHashes, upsertIndexRows, deleteIndexRows, indexStats, normalizeText, clearIndexRows,
   upsertShadowRows, deleteShadowRows, passEstimate, buildTextIndex,
 } from "./store.js";
 import { DEFAULT_TABLES } from "./tables.config.js";
@@ -20,6 +20,7 @@ import { parseNumber, parseDate } from "./query.js";
 import { displayNamesMap, sortByName } from "./names.js";
 import { enrichStage, embedStage, enrichKeyFor, promptFor } from "./stages.js";
 import { stages, stageReady } from "./ai.js";
+import { semanticTables } from "./semantic.js";
 import { vectorKey } from "./embed.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -35,20 +36,26 @@ const md5 = (s) => crypto.createHash("md5").update(s).digest("hex");
 export function tablesConfig() {
   try {
     const cfg = JSON.parse(fs.readFileSync(path.join(DATA_DIR, "config.json"), "utf8"));
-    if (cfg.tables && Object.keys(cfg.tables).length) return cfg.tables;
+    // A saved table set wins, even an empty one (every table dropped): the
+    // shipped sample config is for an install that never chose tables.
+    if (cfg.tables && typeof cfg.tables === "object" && !Array.isArray(cfg.tables)) return cfg.tables;
   } catch {}
   return DEFAULT_TABLES;
 }
 
 let building = false;
+let refreshing = false; // a one-table record refresh holds `building` (not a sync)
 export const isBuilding = () => building;
+export const isRefreshing = () => refreshing;
 
 // Build (or incrementally refresh) the whole index.
-export async function buildIndex({ onEvent = () => {}, shouldStop = () => false, expected = {}, full = false, stagesOnly = false } = {}) {
+// `rebuild`: no pull from FileMaker, the index is made again from the local
+// copies. `fromScratch` (with rebuild) empties the index first.
+export async function buildIndex({ onEvent = () => {}, shouldStop = () => false, expected = {}, full = false, stagesOnly = false, rebuild = false, fromScratch = false } = {}) {
   if (building) throw new Error("index build already running");
   building = true;
   try {
-    return await doBuild(onEvent, shouldStop, expected, full, stagesOnly);
+    return await doBuild(onEvent, shouldStop, expected, full, stagesOnly, { rebuild, fromScratch });
   } finally {
     building = false;
   }
@@ -120,7 +127,7 @@ async function buildSummary({ pulled = [], tables = [], stageSummary = {}, cfg, 
   };
 }
 
-async function doBuild(emit, shouldStop = () => false, expected = {}, full = false, stagesOnly = false) {
+async function doBuild(emit, shouldStop = () => false, expected = {}, full = false, stagesOnly = false, { rebuild = false, fromScratch = false } = {}) {
   const t0 = Date.now();
   const cfg = tablesConfig();
   const labels = tableLabels(cfg);
@@ -131,24 +138,35 @@ async function doBuild(emit, shouldStop = () => false, expected = {}, full = fal
     onEvent({ type: "start", tables: [], stagesOnly: true, plan: { pullShare: 0, indexShare: 0, stagesShare: 1 } });
     await ensureIndexTable();
     const stageSummary = await runStages({ cfg, labels, onEvent, shouldStop, full });
+    // A Run that built nothing says so: "Already up to date". Only when a stage
+    // really ran (one that could not run said why in a note) and nothing failed
+    // or was stopped.
+    const ran = Boolean(stageSummary.embed?.ran || stageSummary.enrich?.ran);
+    const built = Number(stageSummary.embed?.done || 0) + Number(stageSummary.enrich?.done || 0);
+    const trouble = Number(stageSummary.embed?.failed || 0) + Number(stageSummary.enrich?.failed || 0) + (stageSummary.embed?.stopped ? 1 : 0) + (stageSummary.enrich?.stopped?.length || 0);
+    const upToDate = ran && !built && !trouble && !shouldStop();
     const stats = await indexStats();
     const prior = indexManifest();
     const result = { ...prior, builtAt: prior.builtAt || new Date().toISOString(), lastRunAt: new Date().toISOString(), index: stats, stages: stageSummary };
     fs.writeFileSync(path.join(DATA_DIR, "index-manifest.json"), JSON.stringify(result, null, 2));
-    onEvent({ type: "done", ...result, summary: await buildSummary({ stageSummary, cfg, labels, t0 }) });
+    onEvent({ type: "done", ...result, upToDate, summary: { ...(await buildSummary({ stageSummary, cfg, labels, t0 })), upToDate } });
     return result;
   }
   // One order everywhere: display name, A to Z, case-insensitive, then the
   // raw name. The picker shows it, the progress list shows it, and the
   // work runs in it.
   const names = sortByName(Object.keys(cfg), labels);
+  if (!names.length) throw new Error("No tables are chosen. Choose tables in Settings, Tables tab, then sync.");
   // Every event that names a table also carries its display name.
   const onEvent = (e) => { const n = e.name ?? e.table; emit(n !== undefined ? { ...e, label: labels[n] || n } : e); };
   onEvent({ type: "start", tables: names.map((n) => ({ name: n, label: labels[n], expected: expected[n] ?? null })), plan: PLAN });
   let pulled = [];
 
   // 1. Source refresh: OData sync when FileMaker is configured, else sample.
-  if (fmConfigured()) {
+  // A rebuild reads nothing: the local copies are the source.
+  if (rebuild) {
+    onEvent({ type: "phase", phase: "rebuild" });
+  } else if (fmConfigured()) {
     onEvent({ type: "phase", phase: "schema" });
     const schema = await fetchSchema();
     // A file that refused to open is a failed sync, not an empty one. Until
@@ -158,7 +176,7 @@ async function doBuild(emit, shouldStop = () => false, expected = {}, full = fal
     // longer has: say so, do not skip it in silence.
     if (schema.dbErrors?.length) {
       throw new Error(schema.dbErrors.map((d) => `FileMaker could not open "${d.db}": ${fmReason(d.error)}`).join("; ") +
-        ". Check the server address, the account and the password in Settings, FileMaker tab. Nothing was changed.");
+        ". Check the server address, the account and the password on the Data Sources tab. Nothing was changed.");
     }
     const inSchema = new Set(schema.tables.map((t) => t.name));
     const missing = names.filter((n) => !inSchema.has(n));
@@ -175,7 +193,8 @@ async function doBuild(emit, shouldStop = () => false, expected = {}, full = fal
         ? [MITOS_JSON_FIELD, t.pk].filter(Boolean)
         : [...new Set([t.pk, ...(t.textFields || []), ...(t.displayFields || [])])].filter(Boolean);
     }
-    pulled = (await syncTables(schema.tables, names, () => {}, onEvent, { selects, labels, expected, shouldStop })).pulled || [];
+    const pks = Object.fromEntries(names.map((n) => [n, cfg[n].pk]));
+    pulled = (await syncTables(schema.tables, names, () => {}, onEvent, { selects, labels, expected, pks, shouldStop })).pulled || [];
   } else if (sampleAvailable()) {
     const m = storeManifest();
     if (!m.sample || !m.totalRows || sampleUpdatedAt() > Date.parse(m.syncedAt || 0)) pulled = (await loadSampleData()).tables || [];
@@ -185,6 +204,7 @@ async function doBuild(emit, shouldStop = () => false, expected = {}, full = fal
   }
 
   await ensureIndexTable();
+  if (rebuild && fromScratch) await clearIndexRows();
   // A config change can leave index rows for tables that are no longer
   // configured. Remove them: search only ever shows configured tables.
   const nameList = names.map((n) => `'${esc(n)}'`).join(",");
@@ -201,6 +221,11 @@ async function doBuild(emit, shouldStop = () => false, expected = {}, full = fal
   for (const table of names) {
     if (shouldStop()) { onEvent({ type: "cancelled", at: table }); break; }
     await indexOneTable(table, cfg[table], onEvent, summary);
+  }
+  // The sync's duplicate-key findings ride along on the table's summary line.
+  for (const sRow of summary) {
+    const p = pulled.find((x) => x.name === sRow.table);
+    if (p?.duplicates?.length) { sRow.duplicates = p.duplicates; sRow.duplicatesTotal = p.duplicatesTotal || p.duplicates.length; }
   }
   // The full-text index over what was just written. A box without the fts
   // extension keeps searching by the field rules alone and says so.
@@ -233,7 +258,9 @@ async function runStages({ cfg, labels, onEvent, shouldStop, full = false, table
   }
   if (!shouldStop()) {
     onEvent({ type: "phase", phase: "embed" });
-    stageSummary.embed = await embedStage({ labels, onEvent, shouldStop, full, tables });
+    // Only the tables whose semantic switch is on; a beacon's tables are narrowed to those.
+    const sem = semanticTables(cfg);
+    stageSummary.embed = await embedStage({ labels, onEvent, shouldStop, full, tables: tables ? tables.filter((n) => sem.includes(n)) : sem });
   }
   return stageSummary;
 }
@@ -244,11 +271,12 @@ async function runStages({ cfg, labels, onEvent, shouldStop, full = false, table
 // A sync in progress wins; the caller is told to try later (the next
 // sync picks the change up by timestamp anyway).
 export async function refreshRecords({ table, ids = [], deleted = [], onEvent = () => {} }) {
+  if (!fmConfigured()) throw new Error("Mitos isn't connected to FileMaker.");
   if (building) return { deferred: true, reason: "a sync is running" };
   const cfg = tablesConfig();
   const t = cfg[table];
   if (!t) throw new Error(`${table} is not an indexed table`);
-  building = true;
+  building = true; refreshing = true;
   try {
     const labels = tableLabels(cfg);
     const schema = await fetchSchema();
@@ -257,25 +285,28 @@ export async function refreshRecords({ table, ids = [], deleted = [], onEvent = 
     const cols = (await sql(`SELECT column_name FROM information_schema.columns WHERE table_name='${esc(table)}' ORDER BY ordinal_position`)).map((c) => c.column_name);
     if (!cols.length) throw new Error(`no local copy of ${table} yet; sync first`);
     let updated = 0;
+    const gone = deleted.map(String);
+    // An id FileMaker no longer has is still removed from Mitos, and listed.
+    const notFound = [];
     if (ids.length) {
       const numericKey = (st.fields || []).find((f) => f.name === t.pk)?.type === "Decimal";
       const rows = await fetchRowsByKeys(st.occurrences[0], cols, t.pk, ids, { db: st.db, select: cols, numericKey });
       updated = await upsertShadowRows(table, t.pk, rows);
-      // An id that came back empty is gone in FileMaker.
       const seen = new Set(rows.map((r) => String(r[t.pk])));
-      for (const id of ids) if (!seen.has(String(id))) deleted.push(id);
+      for (const id of ids) if (!seen.has(String(id))) { notFound.push(String(id)); gone.push(String(id)); }
     }
-    if (deleted.length) {
-      await deleteShadowRows(table, t.pk, deleted.map(String));
-      await deleteIndexRows(table, deleted.map(String));
+    const removeIds = [...new Set(gone)];
+    if (removeIds.length) {
+      await deleteShadowRows(table, t.pk, removeIds);
+      await deleteIndexRows(table, removeIds);
     }
     await ensureIndexTable();
     const summary = [];
     if (ids.length) await indexOneTable(table, t, onEvent, summary, { onlyIds: ids.map(String) });
     const stageSummary = await runStages({ cfg, labels, onEvent, shouldStop: () => false, full: false, tables: [table] });
-    return { table, updated, deleted: deleted.length, index: summary[0] || null, stages: stageSummary };
+    return { table, updated, deleted: removeIds.length, notFound, index: summary[0] || null, stages: stageSummary };
   } finally {
-    building = false;
+    building = false; refreshing = false;
   }
 }
 

@@ -35,7 +35,7 @@ irm https://navarre.ai/get/mitos.ps1 | iex
 
 The installer is not part of this repo. `README.md` says it installs the
 Fly CLI if needed, asks a name and a region, builds in the cloud, and opens
-the browser with your password. Save the password.
+the browser with your key. Save the key.
 
 Using an AI tool? Point it at `AGENTS.md`. The install is one command; a
 good run needs a handful of approvals, not dozens.
@@ -46,7 +46,7 @@ good run needs a handful of approvals, not dozens.
 <file>: (212): Invalid account/password. Nothing was saved.` During a sync:
 `FileMaker could not open "<file>": (212): Invalid account/password. Check
 the server address, the account and the password in Settings, FileMaker
-tab.`
+tab.` (Mitos still says "FileMaker tab"; it's the **Data Sources** tab.)
 
 **Cause.** The account or the password is wrong for that file, or a password
 manager filled the form with another account. FileMaker's code 212 means
@@ -170,23 +170,23 @@ keeps the event stream alive, so a sync you watch is not affected.
 
 - Keep a tab open on the sync overlay while it runs.
 - Let FileMaker Server be the clock: a script schedule with one `Insert from
-  URL` step, `POST https://<app>.fly.dev/api/index/sync?key=<password>`, and
-  a loop that reads `GET /api/index/job?key=<password>` until `running` is
+  URL` step, `POST https://<app>.fly.dev/api/index/sync?key=<key>`, and
+  a loop that reads `GET /api/index/job?key=<key>` until `running` is
   false. The requests keep the machine awake and the overdue timer catches
   up on the next tick.
 - Set `min_machines_running = 1` in your `fly.toml` and deploy. The machine
   never sleeps; it costs more.
 
-## Lost the site password
+## Lost the key
 
-The password is the `SITE_PASSWORD` environment variable on the Fly machine.
+The key is the `SITE_PASSWORD` environment variable on the Fly machine.
 Read it back:
 
 ```bash
 fly ssh console -a <app> -C 'printenv SITE_PASSWORD'
 ```
 
-Or set a new one (this restarts the machine):
+Or set a new one (this restarts the machine; everyone signs in again):
 
 ```bash
 fly secrets set SITE_PASSWORD=<new> -a <app>
@@ -239,15 +239,23 @@ first one every time.
 `nga-artwork`). A word saved with an underscore fails on its next save;
 pick a new one and update the branch in `Mitos - Go To Record`.
 
-## The web viewer says "Not signed in - reload with your ?key link"
+## The sign-in page shows up, or "That key didn't work."
 
-**Cause.** The page was loaded without `?key=<password>` and without the
-cookie it drops, or the cookie (30 days) expired. A FileMaker web viewer
-cannot answer a Basic auth prompt.
+**What you see.** A page with one key field, or `That key didn't work.`
+after you typed one. From a script, `401 Not signed in.` Five wrong keys in
+a row pause sign-in for a minute.
 
-**Fix.** Point the web viewer at `https://<app>.fly.dev/?key=<password>`.
-For a card window, add `&embed=1&q=<the words>`; do not URL-encode the
-words in the script, Set Web Viewer encodes the URL itself.
+**Cause.** The address was opened without a signed-in session and without a
+right `?key=`. A session lasts 30 days, and **Sign out all** (Settings,
+Danger zone) ends every one. A FileMaker web viewer can't answer a Basic
+auth prompt, and it may not keep the cookie, so it needs the key in its
+address.
+
+**Fix.** Type the key. In a web viewer, point it at
+`https://<app>.fly.dev/?key=<key>`; Mitos signs in and lands on the same
+address without the key. For a card window, add `&embed=1&q=<the words>`;
+do not URL-encode the words in the script, Set Web Viewer encodes the URL
+itself. A script that calls `/api/` sends `?key=<key>` or Basic auth.
 
 ## A click on a result does nothing in FileMaker
 
@@ -263,11 +271,18 @@ the table word, the layout, the primary key field. Steps in
 
 ## `POST /api/records/changed` answers 202
 
-**Cause.** The request arrived while a sync was running. Mitos does not
-index single records during a sync. (Not used in 1.0; records update on the
-timed sync.)
+**Cause.** That's normal. Mitos answers at once and refreshes the record
+behind, so FileMaker never waits. If a sync is running, the record waits
+for it to finish.
 
-**Fix.** Nothing. The next sync picks the change up by timestamp.
+**If the record never updates.** The kit's `Mitos - Record Changed` script
+runs through Perform Script on Server, with the account's privileges, so
+**Insert from URL has to be allowed** for that account. Also check the `$url`
+line has `/api/records/changed?key=` and your key, and that the layout has
+an OnRecordCommit trigger that runs the script.
+
+**Fix.** Nothing. Check the Log tab under Record updates: an unknown table
+or a record FileMaker no longer has shows there in red.
 
 ## "Bad DuckDB output: Unexpected token"
 

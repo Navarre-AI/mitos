@@ -16,9 +16,10 @@ index, not on your server. Everything lives under one directory, `DATA_DIR`
 | `mitos-vec.duckdb` | One vector per index row when semantic search is on. A vector is not the text, but it is derived from it. |
 | `config.json` | The FileMaker host, file list, account and **password**, the table config, display names, the sync interval, the date format, the AI keys per provider, and the stage switches. **Plain text.** |
 | `searches.jsonl` | Every search: the query text, what it was read as, the model's rewrite and reading when those stages ran, timings, and every row that was shown (table, id, title, why). |
-| `clicks.jsonl`, `beacon.jsonl` | Which result a person clicked, with the query; what the FileMaker beacon sent. |
+| `clicks.jsonl`, `records.jsonl` | Which result a person clicked, with the query; what each record-by-record call from FileMaker did (table, ids, updated, deleted, not found, errors). |
+| `sessions.json` | Sign-in sessions: a SHA-256 hash of each cookie token and when it started. Never the key or the token. |
 | `schema-scan.json`, `naming.json`, `schema-hints.json` | The structure of your files: table and field names, counts, the proposed names, and the facts read from an uploaded Save a Copy as XML export. |
-| `understand-cache.json`, `models.json`, `passes.jsonl`, `index-manifest.json`, `store-manifest.json` | The rewrite cache (query text in, rewrite out), the provider model lists, the ledger of paid passes, and the sync manifests. |
+| `understand-cache.json`, `models.json`, `ai-models.json`, `passes.jsonl`, `index-manifest.json`, `store-manifest.json` | The rewrite cache (query text in, rewrite out), the provider model lists, the ledger of paid passes, and the sync manifests. |
 | `tmp/` | Page files and checkpoints while a table is being pulled; deleted when the table is loaded. |
 
 What is not stored: fields you did not choose, containers, any record from
@@ -35,12 +36,19 @@ Locally, in `./data`, which is gitignored.
 
 ## Who can read it
 
-One site password, `SITE_PASSWORD`. When it is set, every route needs it:
-`?key=<password>` in the URL (which also drops a cookie for 30 days, marked
-`HttpOnly`, and `Secure` over HTTPS), that cookie, or HTTP Basic auth. When
-it is not set, the site is open. Fly forces HTTPS.
+One key, the `SITE_PASSWORD` secret. When it is set, every route needs it.
+Open the bare address and Mitos shows a sign-in page. A right key sets a
+session cookie (30 days, `HttpOnly`, `Secure` over HTTPS) holding a random
+token; only the token's hash is stored, in `sessions.json`, so the volume
+doesn't give the key away. Five wrong keys from one address pause sign-in
+for a minute. A page opened with `?key=<key>` signs itself in and is sent on
+to the same address without the key (how a FileMaker web viewer works). Scripts
+(a FileMaker schedule, `Insert from URL`, curl) can send `?key=` or HTTP
+Basic auth to `/api/` routes. Settings, Danger zone, **Sign out all** ends
+every session. When `SITE_PASSWORD` is not set, the site is open and there is
+no sign-in. Fly forces HTTPS.
 
-Anyone with the password can search everything, read the search log
+Anyone with the key can search everything, read the search log
 (`GET /api/log`), read the scan, change the table choice, start a sync, and
 set keys. The API never returns the FileMaker password or a full AI key
 (`GET /api/config` returns `hasPass: true` and a key preview of the first 8
@@ -49,7 +57,7 @@ anyone with `fly ssh console` on your app can read them.
 
 The `tables=` filter on a search is a hint the FileMaker script sends to
 narrow one person's results. It is not a permission: someone with the
-password can drop it.
+key can drop it.
 
 ## What Mitos sends to AI providers, and when
 
@@ -58,10 +66,10 @@ Nothing, unless a key is set AND the stage that uses it is on. Then:
 | Call | When | What leaves your machine |
 |---|---|---|
 | Naming pass | Once per schema scan, cached until the schema changes | Table names, up to 6 occurrence names each, record counts, up to 18 field names per table, up to 4 field comments. No record data. |
-| Read the search (`understand`) | At search time, for two or more words | The raw table names and their display names, up to 12 field names per table, today's date, the query text. No record data. |
-| Pick the best (`rerank`) | At search time, for word searches with two or more candidates | The query, the reading, and up to 15 candidates: table label, title, the other display values (cut to 240 characters), and why each matched. **Display values are record data.** |
-| Search notes (`enrich`) | At sync time, only for tables switched on, ten records per call | The prompt and each record's source text: the values of its search fields. **Record data.** |
-| Similar meaning (`semantic`) | At sync time for new or changed rows; at search time for the query | One line per record: the table's display name, the values of its search fields, and its search notes when present, cut to 2,000 characters. **Record data.** At search time, the query text. |
+| Enhanced search: Interpret meaning (`understand`) | At search time, for two or more words | The raw table names and their display names, up to 12 field names per table, today's date, the query text. No record data. |
+| Use AI to determine best match (`rerank`) | At search time, for word searches with two or more candidates | The query, the reading, and up to 15 candidates: table label, title, the other display values (cut to 240 characters), and why each matched. **Display values are record data.** |
+| Enrichment, the search notes (`enrich`) | At sync time, only for tables switched on, ten records per call | The prompt and each record's source text: the values of its search fields. **Record data.** |
+| Semantic search (`semantic`) | At sync time for new or changed rows; at search time for the query | One line per record: the table's display name, the values of its search fields, and its search notes when present, cut to 2,000 characters. **Record data.** At search time, the query text. |
 | Key test, model list | When you paste a key, or open a model picker | The key, to that provider's own endpoint. |
 
 The providers, and the only hosts the code calls: `api.anthropic.com`,
@@ -69,17 +77,21 @@ The providers, and the only hosts the code calls: `api.anthropic.com`,
 Each is called only with the key you gave for it, and only for its own
 role. Voyage has no chat models and is never sent a prompt.
 
+One more host, with no key and no data going out: `navarre.ai`. Mitos
+fetches the public model list, `https://navarre.ai/ai-models.json`, every 12
+hours and when you save a key, and keeps a copy in `ai-models.json`. It is a
+plain GET. Set `MITOS_MODEL_LIST_URL` to point it elsewhere.
+
 Nothing phones home. No telemetry, no usage ping, no update check, no
-report to Matt or anyone. The one other download is the DuckDB CLI from
+report to Matt or anyone (the model list above is a download, nothing is
+sent). The one other download is the DuckDB CLI from
 `github.com/duckdb/duckdb/releases`, at `npm install` on your machine and in
 the Docker build, never at runtime.
 
 ## What Mitos never does
 
 - **Write to FileMaker.** Every FileMaker call in `fm.js` reads: OData
-  discovery, `$metadata`, `$count`, and paged row reads. `fm.js` also
-  carries a Data API login for a layout inventory, inherited from Pythia,
-  that nothing in Mitos calls today. There is no create, update or delete
+  discovery, `$metadata`, `$count`, and paged row reads. There is no create, update or delete
   anywhere in the code. Give the account a read-only privilege set and the
   server enforces it too.
 - **Show generated text as record data.** Display values are copied
@@ -94,7 +106,7 @@ the Docker build, never at runtime.
 
 ## The honest limits
 
-- **One password, one role.** There are no user accounts, no per-user
+- **One key, one role.** There are no user accounts, no per-user
   scoping, no audit of who searched what. The search log tells you what was
   searched, not by whom. If different people may see different tables, that
   needs the FileMaker script's `tables=` filter, and it is advisory.
@@ -107,8 +119,9 @@ the Docker build, never at runtime.
   mistake, is in `searches.jsonl` in plain text, and a search with the
   model stages on is sent to a provider. Do not type secrets into the
   search field.
-- **No rate limit, no lockout.** A wrong password gets a 401 and can try
-  again at once.
+- **Only a short pause, no lockout.** Five wrong keys from one address stop
+  sign-in for a minute. That slows guessing; it doesn't stop it. Use a long
+  key.
 - **Vectors are derived data.** A vector cannot be read back as text, but it
   is built from the record and it lives beside it. Deleting
   `mitos-vec.duckdb` is the reset.

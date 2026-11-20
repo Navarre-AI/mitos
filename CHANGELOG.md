@@ -2,6 +2,21 @@
 
 Newest first. The commit log has the detail; this is the story.
 
+## 1.1.0, 2026-11-20
+
+The first release Matt calls finished. There is no 1.0: it went from 0.9.4 straight here.
+
+- **Sign-in page.** The bare address asks for the key and keeps a session cookie (only its hash is stored). Five wrong keys pause sign-in for a minute. A page opened with `?key=` signs itself in, so a FileMaker web viewer still works with one URL.
+- **Settings tab**, last: machine, memory, disk, copy size, last sync, version and build. The **Danger zone** sits under it: reset, drop a synced copy, rebuild the index, forget AI notes, sign everyone out.
+- **Record by record.** `POST /api/records/changed` answers at once and works behind. The kit's "Mitos - Record Changed" script sends it after a commit through Perform Script on Server, so FileMaker shows no "Transferring URL". The Log tab's Record updates list puts unknown tables and missing records on top, in red.
+- **Duplicate primary keys never stop a sync.** Mitos re-reads the twins, keeps the newer one, and says which ID to fix in FileMaker. Unticking a table removes its copy too, after a confirm that names it.
+- **Semantic search per table.** A switch and the vector count and size for each indexed table. Turning semantic search off warns first, then deletes the vectors to free disk.
+- **Models come from navarre.ai/ai-models.json**, the same list Pythia and Clio read, refreshed every 12 hours and whenever a key is saved. Menus are grouped by job, with a recommended pick per stage.
+- **Best match by the gap.** Every typed word has to match, and the next result has to be well behind. "Use AI to determine best match" is a switch under it. No "why" line under results any more.
+- **Thinking models fit their budget.** A Claude model that thinks first no longer runs out of answer and fails the enrichment test; when one does, the message says so.
+- Keep working while a sync runs, with a strip at the top. The deletion check shows progress. Changing a table's fields warns that it re-reads the table.
+- Fixes from the review: the sign-in redirect stays on the site, a record refresh can't collide with a sync, the manifest is written after each table.
+
 ## 0.9.4, 2026-10-19 (demo box)
 
 - Model lists come live from each provider's own list, cached a day. No model name is hardcoded or guessed from its shape.

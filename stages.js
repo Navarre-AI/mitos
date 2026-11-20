@@ -57,7 +57,7 @@ const BATCH_RULES = `
 You get several records, each under a line "### <id>". Answer with ONE JSON object: {"<id>": "<notes for that record, lines separated by \\n>", ...}, one key per record id given, nothing else.`;
 async function enrichBatch(model, prompt, rows, timeoutMs) {
   const user = rows.map((r) => `### ${r.record_id}\n${r.source_text}`).join("\n\n");
-  const raw = await chat({ model, system: `${prompt.trim()}\n${ENRICH_RULES}\n${BATCH_RULES}`, user, maxTokens: 220 * rows.length + 200, timeoutMs, json: true });
+  const raw = await chat({ model, system: `${prompt.trim()}\n${ENRICH_RULES}\n${BATCH_RULES}`, user, maxTokens: 300 * rows.length + 500, timeoutMs, json: true });
   const j = parseJson(raw);
   if (!j || typeof j !== "object") throw new Error("no JSON in the enrichment answer");
   const out = new Map();
@@ -196,16 +196,24 @@ export function classifyEmbedError(e, provider) {
 // rows (new and changed ones) and leaves the rest for a Run.
 // `tables`: the beacon's case, only those tables' rows.
 export async function embedStage({ labels = {}, onEvent = () => {}, shouldStop = () => false, full = false, tables = null }) {
+  // Vectors whose record left the index go first, whatever else happens:
+  // a cheap anti-join that also cleans up installs that already hold strays.
+  await pruneVectors();
   const ready = stageReady("semantic");
   const summary = { ran: false, done: 0, failed: 0, pending: 0, tokens: 0, cost: 0, stopped: null, stoppedReason: null };
-  if (!ready.ready) return summary;
+  // A stage that cannot run says why in the sync log, never a silent "done".
+  if (!ready.ready) {
+    if (stages().semantic.on) onEvent({ type: "note", note: `semantic search not run this sync: ${ready.why}` });
+    return summary;
+  }
+  // `tables`: the tables whose semantic switch is on (an empty list: none).
+  if (tables && !tables.length) { summary.ran = true; return summary; }
   const info = embedInfo();
   const key = vectorKey();
   summary.ran = true;
   const recreated = await ensureVectorTable(info.dims);
   if (recreated) onEvent({ type: "note", note: `vectors set to ${info.dims} numbers; every record is re-embedded` });
-  await pruneVectors();
-  const total = await countNeedingVectors(key);
+  const total = await countNeedingVectors(key, tables);
   if (!total) return summary;
   const cap = full ? Infinity : EMBED_CAP_PER_SYNC;
   if (total > cap) onEvent({ type: "note", note: `${total.toLocaleString()} records need vectors; this sync does ${cap.toLocaleString()}, press Run on the AI tab for the rest` });
