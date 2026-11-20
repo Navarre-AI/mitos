@@ -31,7 +31,8 @@ Three scripts, plus one layout trigger step:
    from the kit's `Mitos` layout onto it. The web viewer is named `mitos`
    and has **Allow JavaScript to perform FileMaker scripts** on. Without
    that, a click on a result does nothing and there is no error to see.
-2. Copy the scripts from the kit into your file. Keep their names:
+2. Copy the three scripts from the kit into your file (they're hidden, so
+   look in Script Workspace). Keep their names:
    Mitos calls **Mitos - Go To Record** by name.
 3. In **Mitos - Search**, paste your Mitos address (the one the installer
    printed, with the site password in the URL as `?key=`) into the first `Set Variable` line. If your
