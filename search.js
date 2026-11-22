@@ -249,7 +249,11 @@ function finishPct(out) {
       const sc = Number(r.score) || 0;
       r.pct = r.via === "exact" ? (topExact > 0 ? Math.max(1, Math.round((100 * sc) / topExact)) : 100) : Math.max(1, Math.min(99, Math.round(100 * (r.sim ?? sc))));
     }
-    g.results = g.results.map((r, i) => [r, i]).sort((a, b) => (b[0].pct - a[0].pct) || (a[1] - b[1])).map(([r]) => r);
+    // A semantic row the reranker moved into the main list never shows a % above
+    // the close or exact rows of its list, and sorts after them on a tie.
+    const floor = Math.min(100, ...g.results.filter((r) => !r.joined).map((r) => r.pct));
+    for (const r of g.results) if (r.joined) r.pct = Math.min(r.pct, floor);
+    g.results = g.results.map((r, i) => [r, i]).sort((a, b) => (b[0].pct - a[0].pct) || (Number(!!a[0].joined) - Number(!!b[0].joined)) || (a[1] - b[1])).map(([r]) => r);
   }
   out.merged = mergeGroups(out.groups || []);
   if (out.similar) out.similarMerged = mergeGroups(out.similar);
@@ -260,6 +264,8 @@ function finishPct(out) {
 // The AI phase has one time budget. Whatever has not answered when it runs
 // out is skipped, and the search answers with what it has.
 const AI_BUDGET_MS = 6000;
+const SEM_POOL = 20;      // vector rows read per table when the reranker is on
+const RERANK_SEM_MAX = 10; // of those, how many the reranker is shown besides the exact rows
 
 async function runAi(query, exact, { limit, dateFormat, tables, on, tablesCfg, labels }) {
   const timings = {};
@@ -324,19 +330,10 @@ async function runAi(query, exact, { limit, dateFormat, tables, on, tablesCfg, l
     }
   }
 
-  // The reranker needs only the exact and rewritten rows, so it starts now
-  // and runs while the semantic step runs, instead of after it (three model
-  // calls in series took 7 to 9 s on the demo, 2026-09-09).
-  const tr = Date.now();
-  const candidates = on.rerank ? current.out.merged.slice(0, Number(cfg.rerank.candidates) || 15).map((c) => ({ ...c, label: labels[c.table] || c.table })) : [];
-  const pRerank = !on.rerank ? null
-    : left() < 1500 ? Promise.resolve({ skipped: "no time left" })
-    : candidates.length < 2 ? Promise.resolve({ skipped: "one candidate" })
-    : rerank(query, reading || current.out.searched, candidates).catch((e) => ({ error: String(e.message).slice(0, 160), ms: Date.now() - tr }));
-
   // Similar rows: embed the meaning phrase when the model gave one, else the
   // typed words. Rows already in the list are not repeated.
   let similar = [];
+  let semPool = []; // every semantic row considered, in similarity order, for the reranker
   const vec0 = await pVec;
   // A date or number range has no meaning to embed: "birthdays in May"
   // rewritten to a range is answered by the range, and "similar" rows for
@@ -361,10 +358,13 @@ async function runAi(query, exact, { limit, dateFormat, tables, on, tablesCfg, l
       // or none worth searching), inside the person's own tables filter.
       const semTables = semanticTables(tablesCfg);
       const vecTables = tables ? tables.filter((t) => semTables.includes(t)) : semTables;
-      const rows = vecTables.length ? await vectorSearch(v, vectorKey(), { perTable: limit, minSim: 0, tables: vecTables }) : [];
+      // With the reranker on, the pool is wider (R2): it picks which of these
+      // join the main list. The "Semantic matches" block still shows `limit` a table.
+      const rows = vecTables.length ? await vectorSearch(v, vectorKey(), { perTable: on.rerank ? SEM_POOL : limit, minSim: 0, tables: vecTables }) : [];
       const shown = new Set(current.out.merged.map((m) => `${m.table}\u0000${m.id}`));
       const top = rows.reduce((a, r) => Math.max(a, Number(r.sim)), 0);
       const byTable = new Map();
+      const pool = [];
       for (const r of rows) {
         const sim = Number(r.sim);
         // When the best is a real match, rows far behind it are clutter
@@ -373,15 +373,29 @@ async function runAi(query, exact, { limit, dateFormat, tables, on, tablesCfg, l
         if (shown.has(`${r.src_table}\u0000${r.record_id}`)) continue;
         if (!byTable.has(r.src_table)) byTable.set(r.src_table, []);
         const list = byTable.get(r.src_table);
-        if (list.length >= limit) continue;
-        list.push({ id: r.record_id, score: Math.round(sim * 100) / 100, via: "semantic", sim, where: "meaning",
-          why: [`similar meaning (${Math.round(sim * 100)}%)`], display: JSON.parse(r.display), _title: r.title_text || "" });
+        const row = { id: r.record_id, score: Math.round(sim * 100) / 100, via: "semantic", sim, where: "meaning",
+          why: [`similar meaning (${Math.round(sim * 100)}%)`], display: JSON.parse(r.display), _title: r.title_text || "" };
+        pool.push({ table: r.src_table, row, shown: list.length < limit });
+        if (list.length < limit) list.push(row);
       }
+      semPool = pool;
       similar = balance(byTable, limit);
       info.semantic = { ran: true, hits: similar.reduce((a, g) => a + g.results.length, 0), ms: Date.now() - ts, phrase: phrase || query, top: Math.round(top * 100) / 100, weak: top < floor };
     } catch (e) { info.semantic = { ran: true, error: String(e.message).slice(0, 160), ms: Date.now() - ts }; }
     timings.semanticMs = info.semantic.ms;
   }
+
+  // The reranker (R2) sees the exact rows and the best semantic rows in one
+  // call, after the semantic step, inside the same time budget. A late,
+  // skipped or failed call changes nothing: the lists stay as built above.
+  const tr = Date.now();
+  const exactCands = on.rerank ? current.out.merged.slice(0, Number(cfg.rerank.candidates) || 15).map((c) => ({ ...c, label: labels[c.table] || c.table })) : [];
+  const semCands = on.rerank ? semPool.slice().sort((a, b) => b.row.sim - a.row.sim).slice(0, RERANK_SEM_MAX).map(({ table, row }) => ({ table, ...publicRow(row), label: labels[table] || table })) : [];
+  const candidates = [...exactCands, ...semCands];
+  const pRerank = !on.rerank ? null
+    : left() < 1500 ? Promise.resolve({ skipped: "no time left" })
+    : candidates.length < 2 ? Promise.resolve({ skipped: "one candidate" })
+    : rerank(query, reading || current.out.searched, candidates, { max: exactCands.length + semCands.length }).catch((e) => ({ error: String(e.message).slice(0, 160), ms: Date.now() - tr }));
 
   const out = {
     ...current.out,
@@ -404,13 +418,34 @@ async function runAi(query, exact, { limit, dateFormat, tables, on, tablesCfg, l
     else if (r.error) info.rerank = { ran: true, error: r.error, ms: r.ms };
     else {
       const ordered = r.order.map((i) => candidates[i]);
-      // Rebuild the groups in the reranked order: tables by their best
-      // position, rows inside a table by position.
       const pos = new Map(ordered.map((c, i) => [`${c.table}\u0000${c.id}`, i]));
       const rankOf = (t, id) => pos.has(`${t}\u0000${id}`) ? pos.get(`${t}\u0000${id}`) : 1e6;
+      // Which semantic rows join the main list: the ones the model kept, and
+      // the one it names as best. They are appended to their table's group
+      // (a table that had no hit gets a group) and leave the Semantic block.
+      // finishPct keeps a joined row under every exact and close-spelling row
+      // of its list, so an exact hit is never buried.
+      const joinIdx = new Set((r.keep || []).filter((i) => i >= exactCands.length));
+      if (r.best !== null && r.best >= exactCands.length) joinIdx.add(r.best);
+      const key = (t, id) => `${t}\u0000${id}`;
+      const joinKeys = new Set([...joinIdx].map((i) => key(candidates[i].table, candidates[i].id)));
+      if (joinKeys.size) {
+        for (const i of [...joinIdx].sort((x, y) => x - y)) {
+          const c = candidates[i];
+          const row = semPool.find((p) => p.table === c.table && String(p.row.id) === String(c.id))?.row;
+          if (!row) continue;
+          let g = out.groups.find((x) => x.table === c.table);
+          if (!g) { g = { table: c.table, results: [] }; out.groups.push(g); }
+          g.results.push({ ...publicRow(row), joined: true });
+        }
+        out.similar = (out.similar || []).map((g) => ({ ...g, results: g.results.filter((x) => !joinKeys.has(key(g.table, x.id))) })).filter((g) => g.results.length);
+      }
+      // Tables by their best-ranked row. A table made only of joined semantic
+      // rows never goes above a table the exact or close-spelling search found.
+      const hasReal = (g) => g.results.some((x) => !x.joined);
+      const best0 = (g) => Math.min(...g.results.map((x) => rankOf(g.table, x.id)));
       for (const g of out.groups) g.results.sort((a, b) => rankOf(g.table, a.id) - rankOf(g.table, b.id));
-      out.groups.sort((a, b) => rankOf(a.table, a.results[0]?.id) - rankOf(b.table, b.results[0]?.id));
-      out.merged = out.merged.slice().sort((a, b) => rankOf(a.table, a.id) - rankOf(b.table, b.id));
+      out.groups.sort((a, b) => Number(hasReal(b)) - Number(hasReal(a)) || best0(a) - best0(b));
       const threshold = Number(cfg.rerank.oneThreshold) || 0.85;
       if (on.best && r.best !== null && r.confidence >= threshold) {
         const c = candidates[r.best];

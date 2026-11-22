@@ -63,7 +63,7 @@ async function startMitos({ ai }) {
   if (ai) {
     const tables = Object.fromEntries(Object.entries(DEFAULT_TABLES).map(([n, t]) => [n, { ...t, semantic: true }]));
     // columnsMigrated: a 1.2 config, so the boot migration leaves the per-table semantic switches alone.
-    fs.writeFileSync(path.join(dir, "config.json"), JSON.stringify({ tables, columnsMigrated: "1.2" }, null, 2));
+    fs.writeFileSync(path.join(dir, "config.json"), JSON.stringify({ tables, columnsMigrated: "1.2", ai: { stages: { rerank: { on: true } } } }, null, 2));
   }
   const port = await freePort();
   const base = `http://127.0.0.1:${port}`;
@@ -182,7 +182,7 @@ try {
     const mitos = await runMitos(srv, c);
     const row = { c, fm, mitos: mitos.error ? { rank: null, size: 0, complete: null, top: [], error: mitos.error } : mitos };
     if (c.ai && aiSrv) {
-      const a = await runMitos(aiSrv, c, "&ai=1&stages=exact,fuzzy,semantic");
+      const a = await runMitos(aiSrv, c, `&ai=1&stages=${process.env.BENCH_AI_STAGES || "exact,fuzzy,semantic,rerank"}`);
       row.mitosAi = a.error ? { rank: null, size: 0, complete: null, top: [], error: a.error } : a;
     }
     row.outcome = better(row.mitosAi || row.mitos, fm);

@@ -14,12 +14,13 @@ const SYSTEM = `You are ranking search results from a business database for a pe
 
 You get the search, what it was read as, and a numbered list of candidate records (table, title, other fields, and why the engine matched each one).
 
-Return: {"order": [numbers, best first], "best": number or null, "confidence": 0.0 to 1.0, "why": "at most 12 words"}
+Return: {"order": [numbers, best first], "best": number or null, "confidence": 0.0 to 1.0, "why": "at most 12 words", "keep": [numbers]}
 
 Rules:
 - "order" lists EVERY candidate number exactly once, best first. Prefer the record that IS the thing typed (a name that matches the title) over a record that merely mentions it. A person, company or product named in the search outranks a record that contains those words in a note.
 - "best" is the one record the person is looking for, only when the search names one specific thing and one candidate clearly is it. When the search asks for a set (a range, a category, "people with..."), or two candidates fit equally, "best" is null.
 - "confidence" is your probability that "best" is right. Be honest: two similar names means low confidence.
+- Some candidates say "similar meaning" under matched: they come from a vector search on meaning, not from the words typed. "keep" lists the numbers of those candidates that really answer the search (the right kind of thing, not merely the same topic). Leave out the rest. If none qualify, "keep" is [].
 - Never invent a number that is not in the list.`;
 
 const cache = new Map();
@@ -29,12 +30,12 @@ const md5 = (s) => crypto.createHash("md5").update(s).digest("hex");
 // candidates: [{ table, id, label, display, why, via }], in the engine's order.
 // Returns { order: [index...], best: index|null, confidence, why, cached, ms }
 // or { error }. Never throws.
-export async function rerank(query, reading, candidates) {
+export async function rerank(query, reading, candidates, { max = 0 } = {}) {
   const t0 = Date.now();
   const s = stages().rerank;
   const ready = stageReady("rerank");
   if (!ready.ready) return { error: ready.why, ms: 0 };
-  const n = Math.max(2, Math.min(30, Number(s.candidates) || 15));
+  const n = Math.max(2, Math.min(40, max || Number(s.candidates) || 15));
   const list = candidates.slice(0, n);
   if (list.length < 2) return { error: "fewer than two candidates", ms: 0 };
   const key = md5(`${s.model}|${String(query).trim().toLowerCase()}|${list.map((c) => `${c.table}:${c.id}`).join(",")}`);
@@ -57,7 +58,8 @@ export async function rerank(query, reading, candidates) {
     const bi = Number(j.best) - 1;
     const best = Number.isInteger(bi) && bi >= 0 && bi < list.length ? bi : null;
     const confidence = Math.max(0, Math.min(1, Number(j.confidence) || 0));
-    const out = { order, best, confidence, why: typeof j.why === "string" ? j.why.trim().slice(0, 120) : "" };
+    const keep = Array.isArray(j.keep) ? [...new Set(j.keep.map((v) => Number(v) - 1).filter((i) => Number.isInteger(i) && i >= 0 && i < list.length))] : [];
+    const out = { order, best, confidence, keep, why: typeof j.why === "string" ? j.why.trim().slice(0, 120) : "" };
     cache.set(key, out);
     if (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value);
     return { ...out, cached: false, ms: Date.now() - t0 };

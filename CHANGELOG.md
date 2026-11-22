@@ -9,6 +9,8 @@ Newest first. The commit log has the detail; this is the story.
 
 - **Field weights and recency.** The title weight is named and tested (a title match beats a notes-only match). Records that tie on score and title length now list the most recently modified first, only for tables with a modification timestamp the sync already uses; `npm test` checks it in `scripts/test-recency.mjs`.
 
+- **AI re-ranking over exact and semantic rows.** With the reranker on, the vector pool is 20 per table and one fast-model call sees the exact rows plus the 10 nearest semantic ones. It picks which semantic rows join the main list, the table order and the Best match; exact hits are never removed or put under a semantic row, and a late or failed call changes nothing. `npm run bench` now turns the reranker on for its AI run (AI cases: first in the list 94% to 100% for meaning cases, found 100%). `npm run test:ai` checks the promises with a key.
+
 ## 1.1.0, 2026-11-20
 
 The first release Matt calls finished. There is no 1.0: it went from 0.9.4 straight here.

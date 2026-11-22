@@ -13,7 +13,8 @@
     "eval": "node scripts/eval.mjs",
     "postinstall": "node scripts/fetch-duckdb.mjs",
     "simulate": "node scripts/simulate.mjs",
-    "bench": "node scripts/realworld.mjs"
+    "bench": "node scripts/realworld.mjs",
+    "test:ai": "node scripts/test-ai.mjs"
   },
   "dependencies": {
     "express": "^4.19.2"
