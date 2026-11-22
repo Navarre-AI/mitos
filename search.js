@@ -109,6 +109,7 @@ async function runExact(query, { limit, dateFormat, tables, fuzzy, stageCfg, enr
       why,
       display: JSON.parse(r.display),
       _title: r.title_text || "",
+      _tw: why.filter((w) => w.endsWith("in the title")).length, // query words found in the record's title
       _ord: ord++, // the SQL's order: score, then the matched value (a range lists lowest first), then title length
     });
   }
@@ -175,9 +176,13 @@ function balance(byTable, limit) {
       }
       const sorted = results.slice().sort((a, b) => (fused.get(b) - fused.get(a)) || tie(a, b));
       const near = sorted.filter((r) => listOf(r) === "near").length;
-      return { table, best: fused.get(sorted[0]) || 0, results: sorted.slice(0, Math.min(limit * 2, limit + near)) };
+      return { table, best: fused.get(sorted[0]) || 0, titleWords: sorted[0]?._tw || 0, results: sorted.slice(0, Math.min(limit * 2, limit + near)) };
     })
-    .sort((a, b) => b.best - a.best || a.table.localeCompare(b.table));
+    // Two tables whose best rows are both exact hits tie on the fused score.
+    // The one whose best row has more of the query in its title goes first:
+    // "Robert Whitfield" is the person, not the company he works for (R1,
+    // 2026-11-21). The table name is the last resort, not the first.
+    .sort((a, b) => b.best - a.best || b.titleWords - a.titleWords || a.table.localeCompare(b.table));
 }
 function mergeGroups(groups) {
   const merged = [];
@@ -188,7 +193,7 @@ function mergeGroups(groups) {
   }
   return merged;
 }
-const publicRow = ({ _title, _ord, ...r }) => r;
+const publicRow = ({ _title, _ord, _tw, ...r }) => r;
 const publicGroup = (g) => ({ table: g.table, results: g.results.map(publicRow) });
 
 // --- Phase 2 --------------------------------------------------------------------------------

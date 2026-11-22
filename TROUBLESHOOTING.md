@@ -252,8 +252,8 @@ auth prompt, and it may not keep the cookie, so it needs the site password in it
 address.
 
 **Fix.** Type the site password. In a web viewer, point it at
-`https://<app>.fly.dev/?key=<site password>`; Mitos signs in and lands on the same
-address without it. For a card window, add `&embed=1&q=<the words>`;
+`https://<app>.fly.dev/?key=<site password>`; Mitos signs in and the key stays in
+the address. For a card window, add `&embed=1&q=<the words>`;
 do not URL-encode the words in the script, Set Web Viewer encodes the URL
 itself. A script that calls `/api/` sends the site password as `?key=` or Basic auth.
 

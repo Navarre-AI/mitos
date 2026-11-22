@@ -64,8 +64,8 @@ flags are unverified here. What this repo does show:
 - The site password is read from the `SITE_PASSWORD` environment variable
   (`server.js`). With it set, a page asks for it at `/signin` and keeps a
   session cookie (30 days, only a hash stored); five wrong passwords pause
-  sign-in for a minute. the site password in the URL (`?key=`) on a page signs in and redirects
-  without it (a FileMaker web viewer). `/api/` routes also take `?key=` or
+  sign-in for a minute. the site password in the URL (`?key=`) on a page signs in, and the page
+  loads with the key still in the address (a FileMaker web viewer). `/api/` routes also take `?key=` or
   HTTP Basic auth. With no `SITE_PASSWORD` there is no gate.
 - `Dockerfile` builds from `node:26-slim` and installs the DuckDB CLI 1.5.6.
 

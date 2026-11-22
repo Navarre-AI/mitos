@@ -2,10 +2,10 @@ person_id,first,last,full_name,email,phone,org_id,city,country,since,note
 P0001,Matt,Navarre,Matt Navarre,matt.navarre@example.com,+11 629 773 9565,O0040,Athens,Greece,2019-03-04,primary
 P0002,Ματίας,Ναβάρ,Ματίας Ναβάρ,user.user@example.com,+34 409 785 6147,O0021,Austin,USA,2026-05-05,Greek form of Matt Navarre
 P0003,Метт,Навар,Метт Навар,user.user@example.com,+34 605 234 5915,O0016,Berlin,Germany,2019-01-01,Ukrainian form of Matt Navarre
-P0004,Robert,Whitfield,Robert Whitfield,robert.whitfield@example.com,+41 969 174 1152,O0030,Lyon,France,2026-03-04,formal; search 'Bob Whitfield' should find
-P0005,Margaret,Halloran,Margaret Halloran,margaret.halloran@example.com,+80 776 202 2200,O0030,Lyon,France,2018-10-31,formal; search 'Peg Halloran' should find
-P0006,Darren,Umbridge,Darren Umbridge,darren.umbridge@example.com,+28 718 371 3170,O0035,Athens,Greece,2026-01-01,typo target; search 'Daren Umbrige' should find
-P0007,Siobhan,Murphy,Siobhan Murphy,siobhan.murphy@example.com,+45 270 350 7054,O0060,Athens,Greece,2018-08-30,phonetic; search 'Shavon Murphy' should find
+P0004,Robert,Whitfield,Robert Whitfield,robert.whitfield@example.com,+41 969 174 1152,O0030,Lyon,France,2026-03-04,formal
+P0005,Margaret,Halloran,Margaret Halloran,margaret.halloran@example.com,+80 776 202 2200,O0030,Lyon,France,2018-10-31,formal
+P0006,Darren,Umbridge,Darren Umbridge,darren.umbridge@example.com,+28 718 371 3170,O0035,Athens,Greece,2026-01-01,typo target
+P0007,Siobhan,Murphy,Siobhan Murphy,siobhan.murphy@example.com,+45 270 350 7054,O0060,Athens,Greece,2018-08-30,phonetic
 P0008,Olena,Garcia,Olena Garcia,olena.garcia8@example.com,+70 920 409 9666,O0029,Chania,Greece,2025-10-31,
 P0009,James,Navarre,James Navarre,james.navarre9@example.com,+71 506 779 2697,O0053,Heraklion,Greece,2018-06-29,
 P0010,David,Papadopoulos,David Papadopoulos,david.papadopoulos10@example.com,+14 960 666 3546,O0008,Portland,USA,2025-08-30,

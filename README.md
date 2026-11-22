@@ -41,7 +41,7 @@ Mitos sits behind one site password (the `SITE_PASSWORD` secret on your Fly
 app). Open the bare address and you get a sign-in page; sign in once and a
 cookie keeps you in for 30 days. A FileMaker web viewer can't answer a
 sign-in page, so it puts the site password in the URL (`?key=...`), which
-signs in and lands on the same address without it. It's a different thing
+signs in and keeps it in the address. It's a different thing
 from the API keys of the AI providers. Details in [SECURITY.md](SECURITY.md).
 
 ## Your data
@@ -87,7 +87,7 @@ The table of exactly what is sent, and the honest limits, are in
 Mitos is a human and AI partnership, and proud of it.
 
 - **Matt Navarre**: the idea, the design, every decision, and a lot of testing.
-  Forty years of FileMaker and one stubborn belief that search should be one
+  30+ years of FileMaker and one stubborn belief that search should be one
   field.
 - **Claude** (Anthropic), working in Claude Code as Hera: most of the code,
   the reviews and the test runs.

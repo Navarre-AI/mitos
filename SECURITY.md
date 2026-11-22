@@ -43,8 +43,8 @@ Open the bare address and Mitos shows a sign-in page. The right site password se
 session cookie (30 days, `HttpOnly`, `Secure` over HTTPS) holding a random
 token; only the token's hash is stored, in `sessions.json`, so the volume
 doesn't give the password away. Five wrong passwords from one address pause sign-in
-for a minute. A page opened with the site password in the URL (`?key=`) signs itself in and is sent on
-to the same address without it (how a FileMaker web viewer works). Scripts
+for a minute. A page opened with the site password in the URL (`?key=`) signs itself in and loads
+with the key still in the address (how a FileMaker web viewer works). Scripts
 (a FileMaker schedule, `Insert from URL`, curl) can send the site password as `?key=` or HTTP
 Basic auth to `/api/` routes. Settings, General tab, Danger zone, **Sign out all** ends
 every session. When `SITE_PASSWORD` is not set, the site is open and there is

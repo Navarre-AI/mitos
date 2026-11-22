@@ -119,8 +119,8 @@ const app = express();
 //
 // Machines (a FileMaker Server schedule waking the sync, Insert from URL,
 // curl, the eval scripts) may still use ?key= or HTTP Basic on /api/.
-// A page load with the right ?key= signs in like the sign-in page does and
-// is sent on to the same address without the key.
+// A page load with the right ?key= signs in like the sign-in page does, and
+// the page loads at that address, key and all.
 // Danger zone, "Sign everyone out": the gate below fills this in. With no
 // SITE_PASSWORD there are no sessions and it is a no-op.
 let wipeSessions = () => 0;
@@ -241,7 +241,7 @@ if (SITE_PASSWORD) {
   app.use((req, res, next) => {
     const isApi = req.path.startsWith("/api/");
     // A page load with the right ?key= signs in, the same as the sign-in
-    // page, and lands on the same address without the key. (An old address
+    // page, and the page loads with the key still in the address. (An old address
     // with the key in it, a bookmark, a FileMaker web viewer URL.) A wrong
     // key counts like a wrong key on the sign-in page.
     if (!isApi && req.query.key !== undefined) {
@@ -253,8 +253,7 @@ if (SITE_PASSWORD) {
       if (keyMatches(req.query.key)) {
         misses.delete(ip);
         if (!sessionOk(req)) startSession(req, res);
-        res.set("Cache-Control", "no-store");
-        return res.redirect(303, safeNext(here));
+        return next(); // the page loads with the key still in the address
       }
       if (sessionOk(req)) return next(); // already signed in; a stale key in the address changes nothing
       missKey(ip);
