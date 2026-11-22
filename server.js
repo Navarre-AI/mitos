@@ -1572,7 +1572,7 @@ app.post("/api/ai/enrich-preview", async (req, res) => {
     for (const table of tables) {
       const rows = await sql(`SELECT record_id, source_text FROM mitos_index WHERE src_table='${String(table).replace(/'/g, "''")}' ORDER BY random() LIMIT ${n}`).catch(() => []);
       if (!rows.length) { out.push({ table, label: labels[table] || table, error: "no indexed rows yet" }); continue; }
-      const prompt = String(req.body?.prompt || "").trim() || promptFor(table, readConfig().tables?.[table], labels[table]);
+      const prompt = promptFor(table, readConfig().tables?.[table], labels[table], typeof req.body?.prompt === "string" ? req.body.prompt : undefined);
       try {
         const r = await enrichPreview({ model, prompt, rows });
         out.push({ table, label: labels[table] || table, ms: r.ms, notes: r.notes });

@@ -70,10 +70,17 @@ async function enrichBatch(model, prompt, rows, timeoutMs) {
   return out;
 }
 
-// The prompt for a table: its own, else the overall rules, else the default.
-export function promptFor(table, t, label) {
-  const s = stages().enrich;
-  return (t?.enrich?.prompt || "").trim() || (s.prompt || "").trim() || defaultEnrichPrompt(label || table);
+// The prompt for a table: the shared rules first, then the table's own rules
+// added after them. The default only when both are empty. With just one set,
+// that text goes in as written (so a saved setup keeps its notes key and
+// nothing is rewritten). The output rules (ENRICH_RULES) are added by
+// enrichBatch, always. `shared` overrides the saved shared rules (the preview
+// sends what is in the box).
+export function promptFor(table, t, label, shared) {
+  const all = (shared ?? stages().enrich.prompt ?? "").trim();
+  const own = (t?.enrich?.prompt || "").trim();
+  if (all && own) return `Shared rules:\n${all}\n\nRules for this table:\n${own}`;
+  return all || own || defaultEnrichPrompt(label || table);
 }
 
 // tablesCfg: the saved per-table config (needs .enrich = { on, prompt }).

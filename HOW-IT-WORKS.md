@@ -85,6 +85,10 @@ table has it on. Switching one on shows the count and the price first, then Sync
 keeps it on and the next sync builds it. If you want a safety ceiling,
 `maxRowsPerSync` in the stage's config limits the rows per sync (off by
 default). Every stage row has a "?" that explains it in full.
+Enrichment rules stack: the shared rules (AI tab) always apply, and a table's
+own rules are added after them ("Shared rules", then "Rules for this table").
+The built-in default is used only when both are empty, and the output rules
+("use only facts") are always added. Each box holds up to 4,000 characters.
 Turning Semantic search off on a table warns first, then deletes its vectors
 to free disk.
 

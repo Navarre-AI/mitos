@@ -1713,7 +1713,7 @@ function enrichBlockHtml(raw) {
   return `<div class="texp-enrich">` +
     `<div style="font-size:13px;color:var(--text)">Rules for this table's Enrichment notes</div>` +
     `<textarea class="en-prompt" placeholder="${esc(def)}" spellcheck="false">${esc(e.prompt || "")}</textarea>` +
-    `<div class="note">What the model is told for each record. Blank uses the text shown (or the overall rules, if you set them on the AI tab). The output rules (plain text, nothing invented) are added for you. Notes are written on the next sync.</div>` +
+    `<div class="note">What the model is told for each record. These rules are added after the shared rules from the AI tab; leave this blank to use the shared rules alone (or the text shown, if both are blank). The output rules (plain text, nothing invented) are added for you. Notes are written on the next sync.</div>` +
     `</div>`;
 }
 
