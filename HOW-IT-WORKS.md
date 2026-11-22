@@ -17,12 +17,14 @@ does not drown in text hits.
 |---|---|---|
 | `Murphy`, `matt nav` | words | every word must start a word in the record |
 | `"cardiac clinic"` | a phrase | the words, in that order |
-| `=matt`, `*arre` | whole word, contains | text |
+| `=matt`, `*arre`, `w*field` | whole word, contains, letters inside one word | text |
+| `==Matt Navarre` | the title is exactly this (no name table, no look-alikes) | the title |
 | `Bob Whitfield` | words, with the name table | `bob` also matches `robert`, `rob`, `bobby` |
 | `45`, `$5,000` | a number | number fields (exact), plus the text as a whole word |
 | `100...200`, `>100`, `<=45` | a number range | number fields |
 | `1/15/2026`, `15.1.2026`, `2026-01-15` | a date | date fields |
-| `1/2026` | a month | date fields |
+| `1/2026`, `May 2026` | a month | date fields |
+| `March 4, 2019`, `4 March 2019` | a date, month named in words | date fields (a name with no year stays a word) |
 | `1/1/2026...3/31/2026`, `>1/1/2026` | a date range | date fields |
 | `2019` | a number, or a year | number fields, and dates in 2019 |
 | `matt.navarre@` | an email | email values |
@@ -35,6 +37,13 @@ field). Ties break on title length and record id, so the same query always
 returns the same list. Every hit carries a reason in words in the API and
 the search log (`bob as robert in the title`, `number 65 in range`, `phone
 ends with it`). The page doesn't print it under each result.
+
+When every word must match and nothing does, Mitos asks again with less, and
+says so in the "searched" line: first without filler words (`find`, `please`,
+`the`, `contact`...), then records that carry at least half the words (two at
+least), ranked by how many. It only runs on an empty answer, so it can never
+bury a real hit. A mistyped email address that matched nothing is compared
+whole to each stored address (Jaro-Winkler) and listed as a close spelling.
 
 Day and month order follows the **Date format** setting (month first by
 default). When one part cannot be a month, the data decides.

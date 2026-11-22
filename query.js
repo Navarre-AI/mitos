@@ -47,9 +47,34 @@ const iso = (y, m, d) => `${y}-${pad(m)}-${pad(d)}`;
 const daysIn = (y, m) => new Date(Date.UTC(y, m, 0)).getUTCDate();
 const valid = (y, m, d) => m >= 1 && m <= 12 && d >= 1 && d <= daysIn(y, m) && y >= 1000 && y <= 9999;
 
+// Month names as words (R9): "March 4, 2019", "4 March 2019", "Mar 4th 2019"
+// are a day; "March 2019" and "May 2026" are that whole month. A name with no
+// year ("March") stays a word, so a person called May is still found.
+const MONTHS = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
+const monthNo = (w) => {
+  const v = w.toLowerCase().replace(/\.$/, "");
+  const i = MONTHS.findIndex((n) => n === v || (v.length >= 3 && n.startsWith(v) && (v.length >= 4 || n.length > 4 || n === "may")));
+  return i + 1 || (v === "sept" ? 9 : 0);
+};
+const MON = "(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\\.?";
+const NAMED = [
+  [new RegExp(`^${MON},? (\\d{1,2})(?:st|nd|rd|th)?,? (\\d{4})$`, "i"), (m) => [monthNo(m[1]), +m[2], +m[3]]],
+  [new RegExp(`^(\\d{1,2})(?:st|nd|rd|th)? ${MON},? (\\d{4})$`, "i"), (m) => [monthNo(m[2]), +m[1], +m[3]]],
+  [new RegExp(`^${MON},? (\\d{4})$`, "i"), (m) => [monthNo(m[1]), null, +m[2]]],
+];
+
 // Returns { from, to, label } (ISO dates, inclusive) or null.
 export function parseDate(s, { dateFormat = "mdy", today = new Date() } = {}) {
   const t = String(s).trim();
+  for (const [re, pick] of NAMED) {
+    const nm = re.exec(t);
+    if (!nm) continue;
+    const [mo, d, y] = pick(nm);
+    if (!mo) continue;
+    if (d === null) return { from: iso(y, mo, 1), to: iso(y, mo, daysIn(y, mo)), label: `${y}-${pad(mo)}` };
+    if (!valid(y, mo, d)) return null;
+    return { from: iso(y, mo, d), to: iso(y, mo, d), label: iso(y, mo, d) };
+  }
   const m = DATE_RE.exec(t);
   if (!m) return null;
   let y, mo, d;
@@ -191,6 +216,16 @@ export function parseQuery(raw, opts = {}) {
   const re = /"([^"]+)"|(\S+)/g;
   let m;
   const groups = nameGroups();
+  // ==words (FileMaker's exact match): the record's title is exactly these
+  // words, no name-table forms, no look-alikes.
+  let exact = null;
+  if (q.startsWith("==")) {
+    const w = tokenize(normalizeText(q.slice(2)));
+    if (w.length) {
+      exact = w.join(" ");
+      return { kind: "text", exact, terms: w.map((word) => ({ word, mode: "whole", also: [] })) };
+    }
+  }
   while ((m = re.exec(q))) {
     if (m[1] !== undefined) {
       const words = tokenize(normalizeText(m[1]));
@@ -198,6 +233,12 @@ export function parseQuery(raw, opts = {}) {
       continue;
     }
     let tok = m[2], mode = "start";
+    // A * inside a word (W*field) is any letters in that spot, in one word.
+    const wild = /^([\p{L}\p{N}]+)\*([\p{L}\p{N}]+)$/u.exec(tok);
+    if (wild) {
+      const [a, b] = [tokenize(normalizeText(wild[1]))[0], tokenize(normalizeText(wild[2]))[0]];
+      if (a && b) { terms.push({ word: `${a}*${b}`, mode: "wild", also: [] }); continue; }
+    }
     if (tok.startsWith("=")) { mode = "whole"; tok = tok.slice(1); }
     else if (tok.startsWith("*")) { mode = "contains"; tok = tok.slice(1); }
     const words = tokenize(normalizeText(tok));
@@ -232,11 +273,11 @@ export function describePlan(p) {
     case "phone": return `phone number`;
     case "text": {
       const parts = p.terms.map((t) => {
-        const w = t.mode === "phrase" ? `"${t.word}"` : t.mode === "whole" ? `=${t.word}` : t.mode === "contains" ? `*${t.word}` : t.word;
+        const w = t.mode === "phrase" ? `"${t.word}"` : t.mode === "wild" ? t.word : t.mode === "whole" ? `=${t.word}` : t.mode === "contains" ? `*${t.word}` : t.word;
         return t.also.length ? `${w} (also ${t.also.slice(0, 4).join(", ")}${t.also.length > 4 ? ", ..." : ""})` : w;
       });
       const note = p.fallback === "most" ? ` (nothing had every word: records with at least ${p.need} of them)` : p.fallback === "filler" ? " (filler words left out)" : "";
-      return `words: ${parts.join(", ")}${note}`;
+      return p.exact ? `exactly: ${p.exact}` : `words: ${parts.join(", ")}${note}`;
     }
     default: return "";
   }

@@ -15,7 +15,7 @@ export const DEFAULT_NAME_GROUPS = [
   ["elizabeth", "liz", "beth", "betty", "eliza", "lisa", "libby", "elisabeth", "isabel", "isabella", "elisabetta"],
   ["james", "jim", "jimmy", "jamie", "jacques", "giacomo", "jaime", "diego", "seamus"],
   ["john", "jack", "johnny", "jon", "jean", "juan", "giovanni", "johann", "hans", "ioannis", "yannis", "ivan", "sean", "ian", "evan"],
-  ["matthew", "matt", "matthias", "mathias", "matias", "mateo", "matteo", "matthieu", "matias", "ματιας", "ματθαιος", "матвей", "метт"],
+  ["matthew", "matt", "mathieu", "matthias", "mathias", "matias", "mateo", "matteo", "matthieu", "matias", "ματιας", "ματθαιος", "матвей", "метт"],
   ["michael", "mike", "mick", "mickey", "michel", "miguel", "michele", "mikhail", "michalis", "michail"],
   ["thomas", "tom", "tommy", "thom", "tomas", "tommaso", "thanasis"],
   ["charles", "charlie", "chuck", "chas", "carl", "karl", "carlos", "carlo", "karol"],
@@ -87,7 +87,7 @@ export const DEFAULT_NAME_GROUPS = [
   ["virginia", "ginny", "ginger", "virginie"],
   ["wilhelmina", "mina", "wilma", "billie"],
   ["angela", "angie", "angelina", "angeliki", "angelica"],
-  ["siobhan", "shavon", "shevaun", "chevonne", "shivaun"],
+  ["siobhan", "shavon", "shevaun", "chevonne", "shivaun", "shivawn", "shivon", "sheevawn"],
   ["sean", "shawn", "shaun", "shane"],
   ["darren", "daren", "darrin", "darin"],
 ];

@@ -1053,7 +1053,14 @@ const between = (list, lo, hi, cast) => {
 const enrichExpr = (enrichTables) => enrichTables && enrichTables.length
   ? `(CASE WHEN src_table IN (${enrichTables.map((n) => `'${esc(n)}'`).join(",")}) THEN coalesce(enrich_norm, '') ELSE '' END)`
   : "''";
+// A word with a * inside it ("w*field"): the letters before, any letters, the
+// letters after, all inside one word.
+const wildRe = (word) => ` ${word.split("*").join("[^ ]*")}`;
 function termSql(t, enrichTables) {
+  if (t.mode === "wild") {
+    const re = esc(wildRe(t.word));
+    return { where: `regexp_matches(search_text, '${re}')`, score: `(2 + (CASE WHEN regexp_matches(title_text, '${re}') THEN 4 ELSE 0 END))` };
+  }
   const ENRICH = enrichExpr(enrichTables);
   const words = [t.word, ...t.also];
   const where = (w) => {
@@ -1077,7 +1084,10 @@ export async function textSearch(plan, { perTable = 5, tables, enrichTables = nu
     case "text": {
       const parts = plan.terms.map((t) => termSql(t, enrichTables));
       const phrase = like(plan.terms.map((t) => t.word).join(" "));
-      if (plan.need) {
+      if (plan.exact) {
+        where = `trim(title_text) = '${esc(plan.exact)}'`;
+        score = "10";
+      } else if (plan.need) {
         // The "most words" fallback (only when every word found nothing): a
         // record needs `need` of the words, and ranks by how many it has,
         // then by the usual field scores of the words it does have.
@@ -1092,7 +1102,7 @@ export async function textSearch(plan, { perTable = 5, tables, enrichTables = nu
       // prefix scan (so "nav" finds Navarre, which BM25 alone cannot), and
       // the full-text index weighs them by term rarity and document length.
       if (await textIndexReady()) {
-        const words = plan.terms.map((t) => t.word).join(" ");
+        const words = plan.terms.filter((t) => t.mode !== "wild").map((t) => t.word).join(" ");
         score += ` + 2 * coalesce(fts_main_mitos_index.match_bm25(doc_key, '${esc(words)}'), 0)`;
         safe = false;
       }
@@ -1212,6 +1222,22 @@ export async function fuzzySearch(words, { perTable = 5, minSim = 0.86, tables }
      WHERE length(title_text) > 2 AND ((${gate}) OR ${packedGate}) AND ${sim} >= ${Number(minSim)}${tableFilter(tables)}
      QUALIFY row_number() OVER (PARTITION BY src_table ORDER BY sim DESC, length(title_text), record_id) <= ${Number(perTable)}
      ORDER BY src_table, sim DESC, length(title_text), record_id`
+  );
+}
+
+// A mistyped email address (R9): only asked when the exact address matched
+// nothing. Each address of a record is compared whole, Jaro-Winkler, to the
+// one typed; the record scores its closest address.
+export async function fuzzyEmailSearch(value, { perTable = 5, minSim = 0.93, tables } = {}) {
+  const v = esc(String(value));
+  const sim = `list_max(list_transform(string_split(trim(emails), ' '), lambda e: jaro_winkler_similarity(e, '${v}')))`;
+  return sql(
+    `SELECT src_table, record_id, display, title_text, ${sim} AS sim,
+            list_filter(string_split(trim(emails), ' '), lambda e: jaro_winkler_similarity(e, '${v}') = ${sim})[1] AS email
+     FROM mitos_index
+     WHERE length(emails) > 2 AND ${sim} >= ${Number(minSim)}${tableFilter(tables)}
+     QUALIFY row_number() OVER (PARTITION BY src_table ORDER BY sim DESC, record_id) <= ${Number(perTable)}
+     ORDER BY src_table, sim DESC, record_id`
   );
 }
 

@@ -106,8 +106,8 @@ add("months", "3/2019", { kind: "date", exact: ["P0001", "P0086"], table: "peopl
 add("months", "2019-03", { exact: ["P0001", "P0086"], table: "people" });
 add("months", "2026-05", { exact: ["P0002", "P0087"], table: "people" });
 add("months", "1/2026", { exact: ["P0006", "P0091", "P0176"], table: "people" });
-add("months", "March 2019", { level: "should", exact: ["P0001", "P0086"], table: "people", why: "month names are not read as dates (the query is searched as words and finds nothing)" });
-add("months", "June 2026", { level: "should", exact: ["P0172"], table: "people", why: "month names are not read as dates" });
+add("months", "March 2019", { kind: "date", exact: ["P0001", "P0086"], table: "people", why: "a month name with a year is a month range" });
+add("months", "June 2026", { kind: "date", exact: ["P0172"], table: "people" });
 
 // ---- phones (last four digits, whole numbers) ----
 add("phones", "+11 629 773 9565", { kind: "phone", exact: ["P0001"], table: "people", notTables: ["products", "organizations"] });
@@ -213,5 +213,24 @@ add("long", "find Bob Whitfield please", { best: "P0004", why: "filler words dro
 add("long", "Bob Whitfield purple monkey", { table: "people", ids: ["P0004"], pctOrder: true, why: "most words: two of four" });
 add("long", "purple monkey dishwasher", { empty: true, why: "three words nobody has: most-words needs two matches, finds none" });
 add("long", "zzqx please", { empty: true, why: "a filler word never makes a match" });
+
+// ---- 1.2 find-more (R9) ----
+add("months", "March 4, 2019", { kind: "date", exact: ["P0001"], table: "people" });
+add("months", "4 March 2019", { kind: "date", exact: ["P0001"], table: "people" });
+add("months", "Mar 4th 2019", { kind: "date", exact: ["P0001"], table: "people" });
+add("months", "May 2026", { kind: "date", exact: ["P0002", "P0087"], table: "people" });
+add("months", "May", { kind: "text", why: "a month name alone stays a word (a person can be called May)" });
+add("emails", "darren.umbrige@example.com", { table: "people", ids: ["P0006"], pctOrder: true, why: "a slip inside an address" });
+add("emails", "totally.unknown@nowhere.org", { empty: true, why: "no address is close" });
+add("nicknames", "Rob Whit", { table: "people", ids: ["P0004"], why: "word starts" });
+add("nicknames", "Maria Muller", { table: "people", ids: ["P0014"], why: "accents typed plain" });
+add("nicknames", "Matt Petrov", { table: "people", ids: ["P0040"], why: "Mathieu is Matt, from the name list" });
+add("typos", "Shivawn Murphy", { table: "people", ids: ["P0007"], why: "a phonetic spelling, from the name list" });
+add("operators", "==Matt Navarre", { table: "people", exact: ["P0001"], best: "P0001", why: "== means the title is exactly this" });
+add("operators", "==Matt", { empty: true, why: "no title is exactly Matt, and no look-alikes" });
+add("operators", "Whit*", { table: "people", ids: ["P0004"] });
+add("operators", "W*field", { table: "people", ids: ["P0004"], why: "* inside a word" });
+add("operators", "\"Matt Navarre\"", { table: "people", ids: ["P0001"] });
+add("operators", "*field", { table: "people", ids: ["P0004"], why: "leading * is inside-a-word" });
 
 export const CASES = C;

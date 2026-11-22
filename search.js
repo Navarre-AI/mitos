@@ -20,7 +20,7 @@
 // best score, interleave round-robin.
 
 import "./env.js";
-import { textSearch, fuzzySearch, vectorSearch, indexStats, normalizeText } from "./store.js";
+import { textSearch, fuzzySearch, fuzzyEmailSearch, vectorSearch, indexStats, normalizeText } from "./store.js";
 import { parseQuery, describePlan } from "./query.js";
 import { stages, STAGE_NAMES, keyForProvider, providerOf } from "./ai.js";
 import { embedQuery, vectorKey } from "./embed.js";
@@ -145,9 +145,22 @@ async function runExact(query, { limit, dateFormat, tables, fuzzy, stageCfg, enr
   // Two-letter words count: "Ac me systems" only finds Acme Systems when
   // "ac" and "me" are part of the comparison (the space-free form).
   const words = plan.kind === "text"
-    ? plan.terms.flatMap((t) => t.mode === "phrase" ? t.word.split(" ").map((w) => [w]) : [[t.word, ...(t.also || [])]]).filter((g) => g[0].length >= 2)
+    ? plan.terms.filter((t) => t.mode !== "wild").flatMap((t) => t.mode === "phrase" ? t.word.split(" ").map((w) => [w]) : [[t.word, ...(t.also || [])]]).filter((g) => g[0].length >= 2)
     : [];
-  if (fuzzy && words.length) {
+  if (fuzzy && plan.kind === "email" && !raw.length) {
+    const tf = Date.now();
+    try {
+      const fz = await fuzzyEmailSearch(plan.value, { perTable: limit, minSim: Math.max(0.93, Number(stageCfg.fuzzy.minSim) || 0), tables });
+      for (const r of fz) {
+        if (!byTable.has(r.src_table)) byTable.set(r.src_table, []);
+        const sim = Number(r.sim);
+        byTable.get(r.src_table).push({ id: r.record_id, score: Math.round(sim * 100) / 100, via: "fuzzy", where: "fields", sim,
+          why: [`email looks like ${r.email} (${Math.round(sim * 100)}%)`], display: JSON.parse(r.display), _title: r.title_text || "" });
+      }
+      fuzzyInfo = { ran: true, hits: fz.length, ms: Date.now() - tf };
+    } catch (e) { fuzzyInfo = { ran: true, error: String(e.message).slice(0, 120), ms: Date.now() - tf }; }
+  }
+  if (fuzzy && words.length && !plan.exact) {
     const tf = Date.now();
     try {
       const minSim = Number(stageCfg.fuzzy.minSim) || 0.9;
@@ -446,7 +459,7 @@ export async function deterministicBest(result) {
     const shown = normalizeText(Object.values(first.display || {}).join(" "));
     const title = normalizeText(String(Object.values(first.display || {})[0] ?? ""));
     const terms = result.plan?.terms || [];
-    const matches = (t) => [t.word, ...(t.also || [])].some((w) => (t.mode === "whole" ? shown.includes(` ${w} `) : t.mode === "contains" ? shown.includes(w) : shown.includes(` ${w}`)));
+    const matches = (t) => [t.word, ...(t.also || [])].some((w) => (t.mode === "wild" ? new RegExp(` ${w.split("*").join("[^ ]*")}`).test(shown) : t.mode === "whole" ? shown.includes(` ${w} `) : t.mode === "contains" ? shown.includes(w) : shown.includes(` ${w}`)));
     if (terms.length ? !terms.every(matches) : !(result.words || []).every((w) => shown.includes(` ${w}`))) return null;
     // A name is short. A record whose "title" is a paragraph (a product
     // listed by its blurb) carries any two words, and that is no answer.
@@ -481,11 +494,12 @@ function explain(plan, r) {
   const out = [];
   const st = r.search_text || "", tt = r.title_text || "", en = r.enrich_norm || "";
   const has = (text, w, mode) => {
+    if (mode === "wild") return new RegExp(` ${w.split("*").join("[^ ]*")}`).test(text);
     if (mode === "whole") return text.includes(` ${w} `);
     if (mode === "contains") return text.includes(w);
     return text.includes(` ${w}`);
   };
-  const levelOf = (text, w) => text.includes(` ${w} `) ? "whole word" : text.includes(` ${w}`) ? "word start" : text.includes(w) ? "inside a word" : null;
+  const levelOf = (text, w) => w.includes("*") ? "pattern" : text.includes(` ${w} `) ? "whole word" : text.includes(` ${w}`) ? "word start" : text.includes(w) ? "inside a word" : null;
   switch (plan.kind) {
     case "text":
       for (const t of plan.terms) {
