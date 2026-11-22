@@ -149,6 +149,7 @@ function render(data, opts = {}) {
   // close spelling or a semantic row shows its own similarity, never 100%.
   const topExact = Math.max(0, ...allRows.filter((m) => m.via === "exact").map((m) => Number(m.score) || 0));
   const pctOf = (res) => {
+    if (res.pct !== undefined) return res.pct; // the server sorts by this number
     const sc = Number(res.score) || 0;
     if (res.via === "exact") return topExact > 0 ? Math.max(1, Math.round((100 * sc) / topExact)) : 100;
     return Math.max(1, Math.min(99, Math.round(100 * (res.sim ?? sc))));

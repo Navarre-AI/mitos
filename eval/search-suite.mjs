@@ -18,6 +18,7 @@
 //   cap     no table group may hold more than this many rows
 //   best    an id: Best Match is flagged and is that record.
 //           null: Best Match must NOT be flagged (a close call).
+//   pctOrder  true: in every list the shown % never goes up top to bottom
 //   empty   true: nothing may come back
 //   why     one line, shown with a failure
 
@@ -134,6 +135,13 @@ add("multi-word", "Atlas & Co", { table: "organizations", ids: ["O0005"], best: 
 add("multi-word", "Matt Navarre", { table: "organizations", ids: ["O0040"], rank: 1, why: "employee names are joined into the employer's text" });
 add("multi-word", "Hank's Used Nuclear Reactor Parts", { table: "organizations", ids: ["O0001"] });
 add("multi-word", "Espresso Pods", { table: "products", ids: ["PR0014"] });
+
+// ---- the % shown and the order agree (U2): never up as you read down a list ----
+add("multi-word", "gaming laptop", { pctOrder: true, why: "shown % is the sort key" });
+add("multi-word", "john costa", { pctOrder: true });
+add("multi-word", "bob whitfeld", { pctOrder: true, why: "close spellings mixed with exact rows" });
+add("multi-word", "navarre bluewater", { pctOrder: true });
+add("multi-word", "wireless noise cancelling headphones", { pctOrder: true });
 
 // ---- multi-table balance (the Canon rule): every table with a hit shows, no table floods ----
 add("balance", "Navarre", { balance: { tables: ["people", "organizations"], n: 6 }, cap: 6, why: "five exact rows plus the one close-spelling row the list may add" });

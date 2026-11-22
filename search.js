@@ -79,6 +79,7 @@ export async function search(query, opts = {}) {
   let result = { ...base, ...exact.out, stages: { fuzzy: exact.fuzzyInfo, ...(pending.length ? { pending } : {}) } };
   if (phase === "exact" || !pending.length) {
     result.timings = { ...exact.timings, totalMs: Date.now() - t0 };
+    finishPct(result);
     result.best = on.best ? await deterministicBest(result) : null;
     return result;
   }
@@ -195,6 +196,29 @@ function mergeGroups(groups) {
 }
 const publicRow = ({ _title, _ord, _tw, ...r }) => r;
 const publicGroup = (g) => ({ table: g.table, results: g.results.map(publicRow) });
+
+// The % at the right of each row, and the order of the rows, are one number.
+// An exact row is measured against the strongest exact row of the search (the
+// top one is 100%); a close spelling or a semantic row shows its own
+// similarity, never 100%. Each list is then sorted by that shown number
+// (stable: ties keep the order the search and the AI gave), so the % never
+// goes up as you read down a table's list. The AI can still pick the Best
+// match and the order of the tables; inside a list the shown % rules.
+function finishPct(out) {
+  const lists = [...(out.groups || []), ...(out.similar || [])];
+  let topExact = 0;
+  for (const g of lists) for (const r of g.results) if (r.via === "exact") topExact = Math.max(topExact, Number(r.score) || 0);
+  for (const g of lists) {
+    for (const r of g.results) {
+      const sc = Number(r.score) || 0;
+      r.pct = r.via === "exact" ? (topExact > 0 ? Math.max(1, Math.round((100 * sc) / topExact)) : 100) : Math.max(1, Math.min(99, Math.round(100 * (r.sim ?? sc))));
+    }
+    g.results = g.results.map((r, i) => [r, i]).sort((a, b) => (b[0].pct - a[0].pct) || (a[1] - b[1])).map(([r]) => r);
+  }
+  out.merged = mergeGroups(out.groups || []);
+  if (out.similar) out.similarMerged = mergeGroups(out.similar);
+  return out;
+}
 
 // --- Phase 2 --------------------------------------------------------------------------------
 // The AI phase has one time budget. Whatever has not answered when it runs
@@ -336,6 +360,7 @@ async function runAi(query, exact, { limit, dateFormat, tables, on, tablesCfg, l
   // the model is sure. Without the stage, the deterministic rule decides.
   // The plain rule runs only while the Best match switch is on; with it off
   // the AI stage may still reorder the list, but no record is ever marked.
+  finishPct(out);
   let best = on.best ? await deterministicBest(out) : null;
   if (pRerank) {
     const r = await pRerank;
@@ -361,6 +386,7 @@ async function runAi(query, exact, { limit, dateFormat, tables, on, tablesCfg, l
     }
     timings.rerankMs = Date.now() - tr;
   }
+  finishPct(out); // the rerank above reordered the lists; the shown % sorts them again
   out.best = best;
   return { out, stages: info, timings };
 }

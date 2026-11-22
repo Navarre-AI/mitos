@@ -142,6 +142,13 @@ function judge(c, data) {
     if (miss.length) why.push(`no ${miss.join(", ")} row in merged first ${c.balance.n}`);
   }
   if (c.cap) for (const g of data.groups || []) if (g.results.length > c.cap) why.push(`${g.table} holds ${g.results.length} rows (cap ${c.cap})`);
+  if (c.pctOrder) {
+    for (const g of [...(data.groups || []), ...(data.similar || [])]) {
+      const p = g.results.map((r) => r.pct);
+      if (p.some((x) => typeof x !== "number")) why.push(`${g.table} rows carry no pct`);
+      else if (p.some((x, i) => i && x > p[i - 1])) why.push(`${g.table} shows ${p.join(", ")}%, not top to bottom`);
+    }
+  }
   if ("best" in c) {
     const b = data.best;
     if (c.best === null && b) why.push(`Best Match flagged ${b.id}, expected none (close call)`);
