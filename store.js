@@ -1076,9 +1076,18 @@ export async function textSearch(plan, { perTable = 5, tables, enrichTables = nu
   switch (plan.kind) {
     case "text": {
       const parts = plan.terms.map((t) => termSql(t, enrichTables));
-      where = parts.map((p) => p.where).join(" AND ");
       const phrase = like(plan.terms.map((t) => t.word).join(" "));
-      score = parts.map((p) => p.score).join(" + ") + ` + (CASE WHEN ${L("title_text", ` ${phrase}%`)} THEN 4 ELSE 0 END)`;
+      if (plan.need) {
+        // The "most words" fallback (only when every word found nothing): a
+        // record needs `need` of the words, and ranks by how many it has,
+        // then by the usual field scores of the words it does have.
+        const hit = (p) => `(CASE WHEN ${p.where} THEN 1 ELSE 0 END)`;
+        where = `(${parts.map(hit).join(" + ")}) >= ${Number(plan.need)}`;
+        score = `10 * (${parts.map(hit).join(" + ")}) + ` + parts.map((p) => `(CASE WHEN ${p.where} THEN ${p.score} ELSE 0 END)`).join(" + ");
+      } else {
+        where = parts.map((p) => p.where).join(" AND ");
+        score = parts.map((p) => p.score).join(" + ") + ` + (CASE WHEN ${L("title_text", ` ${phrase}%`)} THEN 4 ELSE 0 END)`;
+      }
       // BM25 on top of the field rules: the candidates still come from the
       // prefix scan (so "nav" finds Navarre, which BM25 alone cannot), and
       // the full-text index weighs them by term rarity and document length.

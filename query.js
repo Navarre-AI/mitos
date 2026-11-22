@@ -235,7 +235,8 @@ export function describePlan(p) {
         const w = t.mode === "phrase" ? `"${t.word}"` : t.mode === "whole" ? `=${t.word}` : t.mode === "contains" ? `*${t.word}` : t.word;
         return t.also.length ? `${w} (also ${t.also.slice(0, 4).join(", ")}${t.also.length > 4 ? ", ..." : ""})` : w;
       });
-      return `words: ${parts.join(", ")}`;
+      const note = p.fallback === "most" ? ` (nothing had every word: records with at least ${p.need} of them)` : p.fallback === "filler" ? " (filler words left out)" : "";
+      return `words: ${parts.join(", ")}${note}`;
     }
     default: return "";
   }

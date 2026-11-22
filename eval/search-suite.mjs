@@ -202,11 +202,16 @@ add("long", "Phoenix Cardiac Clinic Portland USA Healthcare", { table: "organiza
 add("long", "Canvas Sneakers shoes budget", { table: "products", ids: ["PR0001"] });
 add("long", "Over-ear ANC headphones", { table: "products", ids: ["PR0027"] });
 add("long", "Reserve Geisha coffee", { table: "products", ids: ["PR0016"] });
-add("long", "find Bob Whitfield please", { table: "people", ids: ["P0004"], level: "should", why: "two stray words, zero exact results" });
-add("long", "contact Matt Navarre", { table: "people", ids: ["P0001"], level: "should", why: "one stray word, zero exact results" });
+add("long", "find Bob Whitfield please", { table: "people", ids: ["P0004"], pctOrder: true, why: "two filler words, zero exact results" });
+add("long", "contact Matt Navarre", { table: "people", ids: ["P0001"], pctOrder: true, why: "one filler word, zero exact results" });
 add("long", "Matt Navarre person", { table: "people", ids: ["P0001"] });
 add("long", "Robert Whitfield Basel", { table: "people", ids: ["P0004"] });
 add("long", "Atlas Trust company", { table: "organizations", ids: ["O0022"] });
-add("long", "Reserve Geisha coffee beans", { table: "products", ids: ["PR0016"], level: "should", why: "one stray word" });
+add("long", "Reserve Geisha coffee beans", { table: "products", ids: ["PR0016"], pctOrder: true, why: "two stray words: the most-words fallback" });
+
+add("long", "find Bob Whitfield please", { best: "P0004", why: "filler words dropped, then it is a plain Bob Whitfield" });
+add("long", "Bob Whitfield purple monkey", { table: "people", ids: ["P0004"], pctOrder: true, why: "most words: two of four" });
+add("long", "purple monkey dishwasher", { empty: true, why: "three words nobody has: most-words needs two matches, finds none" });
+add("long", "zzqx please", { empty: true, why: "a filler word never makes a match" });
 
 export const CASES = C;

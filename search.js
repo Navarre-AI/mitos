@@ -90,12 +90,35 @@ export async function search(query, opts = {}) {
 }
 
 // --- Phase 1 --------------------------------------------------------------------------------
+// Words that ask for a search and are not part of any name. Used only by the
+// fallback for a query that found nothing, to drop them and try again.
+const FILLER = new Set(["find", "please", "the", "a", "an", "contact", "show", "me", "for", "of", "to", "with", "and", "my", "get", "search", "look", "up", "lookup", "about", "info", "record", "records", "who", "is", "i", "want", "need", "where"]);
+
 async function runExact(query, { limit, dateFormat, tables, fuzzy, stageCfg, enrichTables = [] }) {
   const t0 = Date.now();
-  const plan = parseQuery(query, { dateFormat });
+  let plan = parseQuery(query, { dateFormat });
   const out = { kind: plan.kind, searched: describePlan(plan), plan: publicPlan(plan), words: plan.kind === "text" ? plan.terms.map((t) => t.word) : [] };
   if (plan.kind === "empty") return { out: { ...out, groups: [], merged: [] }, timings: { searchMs: 0 }, fuzzyInfo: { ran: false } };
-  const raw = await textSearch(plan, { perTable: limit, tables, enrichTables });
+  let raw = await textSearch(plan, { perTable: limit, tables, enrichTables });
+  // R3: every word must match, and that found nothing. Say the same search
+  // again with fewer demands, never with more: first without filler words
+  // ("find Bob Whitfield please"), then records with most of the words,
+  // ranked by how many they have. Only runs on an empty answer, so it can
+  // never push down or remove an exact hit.
+  if (!raw.length && plan.kind === "text" && plan.terms.length >= 2) {
+    const content = plan.terms.filter((t) => t.mode !== "phrase" ? !FILLER.has(t.word) : true);
+    if (content.length && content.length < plan.terms.length) {
+      const stripped = { ...plan, terms: content, fallback: "filler" };
+      raw = await textSearch(stripped, { perTable: limit, tables, enrichTables });
+      if (raw.length) { plan = stripped; out.words = content.map((t) => t.word); }
+    }
+    if (!raw.length && content.length >= 3) {
+      const most = { ...plan, terms: content, need: Math.max(2, Math.ceil(content.length / 2)), fallback: "most" };
+      raw = await textSearch(most, { perTable: limit, tables, enrichTables });
+      if (raw.length) { plan = most; out.words = content.map((t) => t.word); }
+    }
+    if (raw.length) { out.searched = describePlan(plan); out.plan = publicPlan(plan); }
+  }
   const tSearch = Date.now();
   const byTable = new Map();
   const seen = new Set();
@@ -442,7 +465,7 @@ export async function deterministicBest(result) {
 // The plan as the API shows it: the kind and its bounds, nothing internal.
 function publicPlan(p) {
   switch (p.kind) {
-    case "text": return { kind: p.kind, terms: p.terms };
+    case "text": return { kind: p.kind, terms: p.terms, ...(p.fallback ? { fallback: p.fallback } : {}) };
     case "number": return { kind: p.kind, value: p.value, ...(p.year ? { year: p.year } : {}), ...(p.digits ? { phone: true } : {}) };
     case "range": case "date": case "daterange": return { kind: p.kind, from: p.from, to: p.to };
     case "month": return { kind: p.kind, month: p.month };
