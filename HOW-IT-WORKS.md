@@ -157,9 +157,11 @@ Cancel is honored between pages of a pull and between tables, and it aborts
 the OData request in flight. A table is kept whole or not at all.
 
 With the semantic stage on, a second file, `data/mitos-vec.duckdb`, holds
-one vector per index row (256 numbers by default). It is built at the end of
+one vector per index row (256 numbers by default), made from the record's meaning
+fields (names, titles, descriptions, notes) and its search notes, not its ids, numbers,
+dates, emails, phones or street addresses. It is built at the end of
 a sync, only for rows without a current vector, and it is deleted and
-rebuilt when the model or the size changes. Deleting it by hand is the
+rebuilt when the model, the size or the way the text is made changes. Deleting it by hand is the
 reset: the next sync rebuilds it.
 
 ## Rules

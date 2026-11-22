@@ -63,7 +63,7 @@ async function startMitos({ ai }) {
   if (ai) {
     const tables = Object.fromEntries(Object.entries(DEFAULT_TABLES).map(([n, t]) => [n, { ...t, semantic: true }]));
     // columnsMigrated: a 1.2 config, so the boot migration leaves the per-table semantic switches alone.
-    fs.writeFileSync(path.join(dir, "config.json"), JSON.stringify({ tables, columnsMigrated: "1.2", ai: { stages: { rerank: { on: true } } } }, null, 2));
+    fs.writeFileSync(path.join(dir, "config.json"), JSON.stringify({ tables, columnsMigrated: "1.2", ai: { stages: { rerank: { on: true }, ...(process.env.BENCH_DIMS ? { semantic: { dims: Number(process.env.BENCH_DIMS) } } : {}) } } }, null, 2));
   }
   const port = await freePort();
   const base = `http://127.0.0.1:${port}`;

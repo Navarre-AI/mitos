@@ -17,6 +17,8 @@ Newest first. The commit log has the detail; this is the story.
 
 - **Failed searches, and a click tiebreak.** Log tab: a "Failed searches" list, newest first with counts: searches that found nothing, and (once clicks are being recorded) searches that found something nobody clicked. A search the person kept typing on, and the page's second (AI) call for the same words, count once. Clicks were already recorded (`clicks.jsonl`), so they now break ties: two records that score the same list the one people clicked after that same query first. Never above a better match, and the shown % still never rises down a list. `GET /api/log/failed` has the same list.
 
+- **Leaner vectors.** A record's vector is built from its meaning fields (titles, names, descriptions, notes, places) and its search notes. Ids, numbers, prices, dates, timestamps, emails, phones and street addresses are left out: they say nothing to a meaning search and pull every record toward every other. A record with nothing but such values is still embedded whole. The vector key now ends in the recipe (`.../256/m1`), so on the first sync after updating, every vector is rebuilt once (cents; `Sync now` shows the count and price first). Until then semantic search shows nothing rather than mixing old and new. 512 numbers were measured against 256 on the bench (three runs each, OpenAI text-embedding-3-small): the same found and first-place rates, a double-size vector file, one more table-first miss; 256 stays the default. Changing the size in the config still rebuilds on the next sync ("vectors set to N numbers; every record is re-embedded").
+
 ## 1.1.0, 2026-11-20
 
 The first release Matt calls finished. There is no 1.0: it went from 0.9.4 straight here.

@@ -890,7 +890,7 @@ async function dropVectorsFromFile(srcTable, file, idColumn) {
 // --- Vector rows (index time) ---------------------------------------------------------------
 // Rows across all tables whose vector is missing or was made by another
 // model or size. The index file's writer attaches the vector file read-only
-// for the join. The text embedded is the source text plus the enrichment.
+// for the join. The text embedded is the record's meaning fields plus the enrichment (stages.js embedText).
 const attachVec = () => `ATTACH '${esc(VEC_PATH)}' AS vdb (READ_ONLY);`;
 const NEEDS_VEC = (vecKey, tables) =>
   (fs.existsSync(VEC_PATH)
@@ -900,7 +900,7 @@ const NEEDS_VEC = (vecKey, tables) =>
 export async function rowsNeedingVectors(vecKey, limit, tables) {
   return sql(
     (fs.existsSync(VEC_PATH) ? attachVec() : "") +
-    `SELECT i.src_table, i.record_id, i.source_text || coalesce(chr(10) || i.enrich_text, '') AS text ${NEEDS_VEC(vecKey, tables)}
+    `SELECT i.src_table, i.record_id, i.source_text AS source, i.enrich_text AS notes ${NEEDS_VEC(vecKey, tables)}
      ORDER BY i.src_table, i.record_id LIMIT ${Number(limit) || 1000}`,
     { allowWrite: true }
   );

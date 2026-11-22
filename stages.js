@@ -170,11 +170,40 @@ export async function enrichPreview({ model, prompt, rows }) {
 }
 
 // --- Embedding ----------------------------------------------------------------------------
-// What gets embedded: one plain line per record, the table's name first,
-// then the values without their field labels, then the enrichment. A
-// sentence embeds better than "Field: value" lines (docs/research-ai-stages.md).
-export function embedText(label, sourceText) {
-  const lines = String(sourceText || "").split("\n").map((l) => l.replace(/^[^:\n]{1,40}:\s*/, "").trim()).filter(Boolean);
+// What gets embedded (R7): one plain line per record, the table's name first,
+// then the values of the fields that carry meaning (titles, names, descriptions,
+// notes) without their field labels, then the enrichment. Addresses, numbers,
+// ids, dates, emails, phones and timestamps are left out: they say nothing a
+// meaning search can use and they pull every record toward every other
+// (docs/research-ai-stages.md says a sentence embeds better than "Field: value").
+// A record with nothing but such values is embedded whole, so it still gets a vector.
+const NOT_MEANING_KEY = new Set(["id", "ids", "uuid", "guid", "pk", "fk", "key", "zip", "postal", "postcode", "phone", "tel", "telephone", "mobile", "fax", "email", "mail", "url", "link", "street", "address", "addr", "created", "modified", "timestamp", "hash", "date", "time", "since"]);
+const keyWords = (k) => String(k).replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase().split(/[^a-z]+/).filter(Boolean);
+const NOT_MEANING_VALUE = [
+  /^[\s\d.,+\-\u2013()$\u20ac\u00a3\u00a5%/:#]*$/,                                   // numbers, prices, phone-like runs
+  /^\S+@\S+\.\S+$/,                                                                     // an email
+  /^(https?:\/\/|www\.)\S+$/i,                                                         // a link
+  /^\d{4}-\d{2}-\d{2}([ T]\d{2}:\d{2}(:\d{2})?(\.\d+)?(Z|[+-]\d{2}:?\d{2})?)?$/,   // an ISO date or timestamp
+  /^\d{1,2}[/.]\d{1,2}[/.]\d{2,4}(\s+\d{1,2}:\d{2}.*)?$/,                           // a typed date
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,                    // a uuid
+  /^[A-Za-z]{0,6}[-_]?\d{3,}$/,                                                         // an id like P0042 or INV-2216
+];
+export function meaningLines(sourceText) {
+  const out = [];
+  for (const line of String(sourceText || "").split("\n")) {
+    const m = /^([^:\n]{1,40}):\s*(.*)$/.exec(line);
+    const key = m ? m[1] : "", val = (m ? m[2] : line).trim();
+    if (!val) continue;
+    if (key && keyWords(key).some((w) => NOT_MEANING_KEY.has(w))) continue;
+    if (NOT_MEANING_VALUE.some((re) => re.test(val))) continue;
+    out.push(val);
+  }
+  return out;
+}
+export function embedText(label, sourceText, notes = "") {
+  const all = String(sourceText || "").split("\n").map((l) => l.replace(/^[^:\n]{1,40}:\s*/, "").trim()).filter(Boolean);
+  const kept = meaningLines(sourceText);
+  const lines = [...(kept.length ? kept : all), ...String(notes || "").split("\n").map((l) => l.trim()).filter(Boolean)];
   return `${label ? label + ": " : ""}${lines.join(". ")}`;
 }
 
@@ -234,7 +263,7 @@ export async function embedStage({ labels = {}, onEvent = () => {}, shouldStop =
     const rows = await rowsNeedingVectors(key, Math.min(2000, cap - done), tables);
     if (!rows.length) break;
     try {
-      const texts = rows.map((r) => embedText(labels[r.src_table] || r.src_table, r.text));
+      const texts = rows.map((r) => embedText(labels[r.src_table] || r.src_table, r.source, r.notes));
       const vecs = await embedTexts(texts, { kind: "document", shouldStop, onProgress: () => {} });
       await writeVectors(key, info.dims, rows.map((r, i) => ({ src_table: r.src_table, record_id: r.record_id, vec: vecs[i] })));
       done += rows.length;

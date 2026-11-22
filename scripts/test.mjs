@@ -297,7 +297,7 @@ try {
 }
 // The recency tiebreak needs a modification stamp the sample data lacks: its own small check.
 if (!args.length || args.every((a) => a === "--all")) {
-  for (const f of ["test-recency.mjs", "test-clicks.mjs"]) {
+  for (const f of ["test-recency.mjs", "test-clicks.mjs", "test-embedtext.mjs"]) {
     const rc = spawnSync(process.execPath, [path.join(ROOT, "scripts", f)], { stdio: "inherit" });
     if (rc.status !== 0) exitCode = 1;
   }

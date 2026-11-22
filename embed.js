@@ -26,7 +26,12 @@ export function embedInfo() {
 // The vector key marks what produced a vector: provider, model and size. A
 // row whose stored key differs is re-embedded on the next sync. No provider
 // resolved, no key: a guess here would re-embed every row.
-export const vectorKey = () => { const i = embedInfo(); return i.model && i.provider ? `${i.provider}/${i.model}/${i.dims}` : ""; };
+// The last part names how the text was made (R7: meaning fields only), so a vector
+// built from the old, whole-record text is never mixed with new ones: a change of
+// recipe, like a change of model or size, re-embeds every row on the next sync.
+export const VECTOR_TEXT = "m1";
+export const vectorKeyFor = (provider, model, dims) => (provider && model ? `${provider}/${model}/${dims}/${VECTOR_TEXT}` : "");
+export const vectorKey = () => { const i = embedInfo(); return vectorKeyFor(i.provider, i.model, i.dims); };
 
 function normalize(v, dims) {
   const out = v.slice(0, dims);

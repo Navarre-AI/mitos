@@ -17,7 +17,7 @@ import { semanticOn, semanticTables, semanticDefault } from "./semantic.js";
 import { search, forgetSearchCache } from "./search.js";
 import { setHouseWords } from "./query.js";
 import { namingInfo, keyStatus, isEmbeddingModel, askModel, roleModels, PROVIDERS, STAGE_NAMES, STAGE_DEFAULTS, STAGE_LIMITS, stages, stageReady, keyForProvider, providerOf, modelId, chat, estimateCost, modelListCache, refreshModelList, ensureModelList, RECOMMENDED_JOB, autoModel, modelsView, curatedReady, refreshCurated, curatedStatus, refreshAllModels } from "./ai.js";
-import { vectorKey, embedInfo, embedQuery } from "./embed.js";
+import { vectorKey, vectorKeyFor, embedInfo, embedQuery } from "./embed.js";
 import { defaultEnrichPrompt, promptFor, enrichKeyFor, enrichPreview, readPasses } from "./stages.js";
 import { understand, clearUnderstandCache } from "./understand.js";
 import { rerank } from "./rerank.js";
@@ -1513,7 +1513,7 @@ app.post("/api/ai/estimate", async (req, res) => {
     const mModel = body.embedModel !== undefined ? (String(body.embedModel || "").trim() || autoModel("semantic")) : s.semantic.model;
     const dims = Number(s.semantic.dims) || 256;
     const mProv = mModel ? providerOf(mModel, "embedding") : "";
-    const vecKeyNow = mProv && mModel ? `${mProv}/${modelId(mModel)}/${dims}` : "";
+    const vecKeyNow = mProv && mModel ? vectorKeyFor(mProv, modelId(mModel), dims) : "";
     const enrichKeys = {};
     for (const [name, t] of Object.entries(tablesCfg)) if (t?.enrich?.on) enrichKeys[name] = enrichKeyFor(eModel, promptFor(name, t, labels[name]));
     const semTables = Object.keys(tablesCfg).filter((n) => tablesCfg[n]?.semantic === true);
