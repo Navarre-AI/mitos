@@ -122,6 +122,25 @@ export function nameGroups() {
 }
 export const resetNameGroups = () => { nameGroupsCache = null; };
 
+// The text a query is embedded as: the typed words, then the name table's
+// other forms of any first name in it ("george maraki" also "giorgos γιωργος
+// 乔治"). A vector model rarely sees that 乔治 is George; the name table does.
+// Non-Latin forms go first, six extras at most. The exact search never sees this.
+export function nameVariants(text) {
+  const groups = nameGroups();
+  const words = tokenize(normalizeText(text));
+  const have = new Set(words);
+  const extra = [];
+  for (const w of words) {
+    const g = groups.get(w);
+    if (!g) continue;
+    const others = [...g].filter((x) => !have.has(x));
+    others.sort((a, b) => Number(/^[\x00-\x7f]+$/.test(a)) - Number(/^[\x00-\x7f]+$/.test(b)));
+    for (const x of others.slice(0, 6)) { have.add(x); extra.push(x); }
+  }
+  return extra.length ? `${String(text).trim()} ${extra.join(" ")}` : String(text).trim();
+}
+
 // --- Range operators --------------------------------------------------------------
 const RANGE_RE = /^(.+?)\s*(?:\.\.\.|\.\.|…)\s*(.+)$/;
 const OP_RE = /^(>=|<=|≥|≤|>|<)\s*(.+)$/;

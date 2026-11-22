@@ -41,6 +41,20 @@ add("names", "Hank", { table: "organizations", ids: ["O0001"], best: "O0001" });
 add("names", "\"Cardiac Clinic\"", { table: "organizations", ids: ["O0003"], why: "a quoted phrase stays together" });
 add("names", "cardiac", { table: "organizations", ids: ["O0003"] });
 
+// ---- non-Latin letters: Greek and Chinese records (P0201, P0202), a Latin look-alike (P0203) ----
+add("non-Latin", "Γιώργος Μαράκης", { table: "people", ids: ["P0201"], best: "P0201" });
+add("non-Latin", "γιωργος μαρακης", { table: "people", ids: ["P0201"], why: "tonos dropped, final sigma typed as ς" });
+add("non-Latin", "γιωργοσ μαρακησ", { table: "people", ids: ["P0201"], why: "final sigma typed as a plain σ" });
+add("non-Latin", "ΓΙΩΡΓΟΣ ΜΑΡΑΚΗΣ", { table: "people", ids: ["P0201"], why: "capitals: the final sigma lowers to ς, the record has it too" });
+add("non-Latin", "Μαρακ", { table: "people", ids: ["P0201"], why: "the start of a Greek word" });
+add("non-Latin", "乔治", { table: "people", ids: ["P0202"] });
+add("non-Latin", "乔治·陈", { table: "people", ids: ["P0202"], best: "P0202" });
+add("non-Latin", "乔", { table: "people", ids: ["P0202"], why: "one character: the start of 乔治" });
+add("non-Latin", "陈", { table: "people", ids: ["P0202"] });
+add("non-Latin", "george", { table: "people", ids: ["P0201", "P0202", "P0203"], rank: 5, why: "the name table spans Latin, Greek and Chinese: george is γιώργος is 乔治" });
+add("non-Latin", "乔治 Martin", { table: "people", ids: ["P0203"], why: "a Chinese first name reaches the Latin record through the name table" });
+add("non-Latin", "George Martin", { table: "people", ids: ["P0203"], best: "P0203", why: "Latin is untouched" });
+
 // ---- nicknames: the name table maps short forms to formal ones ----
 add("nicknames", "Bob Whitfield", { table: "people", ids: ["P0004"], best: "P0004" });
 add("nicknames", "Peg Halloran", { table: "people", ids: ["P0005"], best: "P0005" });

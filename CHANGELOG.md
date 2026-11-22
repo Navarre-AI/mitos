@@ -11,6 +11,8 @@ Newest first. The commit log has the detail; this is the story.
 
 - **AI re-ranking over exact and semantic rows.** With the reranker on, the vector pool is 20 per table and one fast-model call sees the exact rows plus the 10 nearest semantic ones. It picks which semantic rows join the main list, the table order and the Best match; exact hits are never removed or put under a semantic row, and a late or failed call changes nothing. `npm run bench` now turns the reranker on for its AI run (AI cases: first in the list 94% to 100% for meaning cases, found 100%). `npm run test:ai` checks the promises with a key.
 
+- **Greek and Chinese.** The sample gains three people (P0201 Γιώργος Μαράκης, P0202 乔治·陈, P0203 George Martin). Greek final sigma (ς) is the same letter as σ on both sides, so a word typed either way finds the record; accents and capitals already worked. A Chinese name finds by its characters, and one character (乔) finds the name it starts. The name table now spans scripts (george = γιώργος = 乔治; john = γιάννης = 约翰), and the semantic query is embedded with those other forms added, since a vector model rarely knows 乔治 is George. A semantic row's cut-off no longer takes its bar from an exact hit's own vector. "george maraki" with Enrichment, Vectors and the reranker on lists Γιώργος Μαράκης (best), George Martin (close spelling) and 乔治·陈 (semantic, well down the list); vectors alone keep 乔治·陈 far from that query.
+
 ## 1.1.0, 2026-11-20
 
 The first release Matt calls finished. There is no 1.0: it went from 0.9.4 straight here.

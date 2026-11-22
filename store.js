@@ -700,7 +700,7 @@ export async function loadSampleData(log = () => {}) {
   for (const f of files) {
     const name = f.replace(/\.csv$/, "");
     const file = esc(path.join(SAMPLE_DIR, f));
-    await sql(`CREATE OR REPLACE TABLE ${q(name)} AS SELECT * FROM read_csv('${file}', header=true)`, { allowWrite: true });
+    await sql(`CREATE OR REPLACE TABLE ${q(name)} AS SELECT * FROM read_csv('${file}', header=true, strict_mode=false)`, { allowWrite: true });
     const rows = (await sql(`SELECT count(*) c FROM ${q(name)}`))[0]?.c ?? 0;
     log(`sample: loaded ${name} (${rows} rows)`);
     tables.push({ name, rows, changed: rows, mode: "sample", watermark: null, columns: [] });
@@ -724,6 +724,7 @@ export function normalizeText(s) {
   const flat = String(s ?? "")
     .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
+    .replace(/\u03c2/g, "\u03c3") // Greek final sigma (ς) is the same letter as σ
     .replace(/[^\p{L}\p{N}]+/gu, " ")
     .trim();
   return flat ? ` ${flat} ` : "";

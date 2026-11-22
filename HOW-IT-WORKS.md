@@ -57,8 +57,10 @@ Tables without one are untouched.
 Day and month order follows the **Date format** setting (month first by
 default). When one part cannot be a month, the data decides.
 
-The name table ships with common English nicknames plus some Greek and other
-European forms (`names.config.js`). Write `data/names.json` as an array of
+Letters outside Latin work the same way: Greek with tonos dropped and either sigma
+(`ς`/`σ`), Chinese by its characters (one character finds the name it starts).
+The name table ships with common English nicknames plus some Greek, Chinese and other
+European forms (`names.config.js`: george is γιώργος is 乔治). Write `data/names.json` as an array of
 arrays to replace it.
 
 ### The stages (switches on top of the exact search)

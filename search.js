@@ -21,7 +21,7 @@
 
 import "./env.js";
 import { textSearch, fuzzySearch, fuzzyEmailSearch, vectorSearch, indexStats, normalizeText } from "./store.js";
-import { parseQuery, describePlan } from "./query.js";
+import { parseQuery, describePlan, nameVariants } from "./query.js";
 import { stages, STAGE_NAMES, keyForProvider, providerOf } from "./ai.js";
 import { embedQuery, vectorKey } from "./embed.js";
 import { understand } from "./understand.js";
@@ -275,7 +275,7 @@ async function runAi(query, exact, { limit, dateFormat, tables, on, tablesCfg, l
   const left = () => t0 + AI_BUDGET_MS - Date.now();
   // The two model calls that depend only on the typed words start together.
   const pUnderstand = on.understand ? understand(query, { tablesCfg, labels, dateFormat }) : Promise.resolve(null);
-  const pVec = on.semantic ? embedQuery(query).then((v) => ({ v })).catch((e) => ({ error: String(e.message).slice(0, 160) })) : Promise.resolve(null);
+  const pVec = on.semantic ? embedQuery(nameVariants(query)).then((v) => ({ v })).catch((e) => ({ error: String(e.message).slice(0, 160) })) : Promise.resolve(null);
 
   let current = exact;
   let rewritten = null, reading = "", semanticPhrase = null, hintTables = [];
@@ -349,7 +349,7 @@ async function runAi(query, exact, { limit, dateFormat, tables, on, tablesCfg, l
       const phrase = semanticPhrase || rewritten;
       // The phrase's own vector only when there is time for it; else the
       // typed words' vector, which is already here.
-      if (phrase && phrase.trim().toLowerCase() !== query.trim().toLowerCase() && left() > 1500) v = await embedQuery(phrase);
+      if (phrase && phrase.trim().toLowerCase() !== query.trim().toLowerCase() && left() > 1500) v = await embedQuery(nameVariants(phrase));
       // No floor: the nearest rows always come back (Matt, 2026-09-09). The
       // floor only says whether they are "Semantic matches" or "Perhaps
       // you meant", and that flag rides along as `weak`.
@@ -362,7 +362,9 @@ async function runAi(query, exact, { limit, dateFormat, tables, on, tablesCfg, l
       // join the main list. The "Semantic matches" block still shows `limit` a table.
       const rows = vecTables.length ? await vectorSearch(v, vectorKey(), { perTable: on.rerank ? SEM_POOL : limit, minSim: 0, tables: vecTables }) : [];
       const shown = new Set(current.out.merged.map((m) => `${m.table}\u0000${m.id}`));
-      const top = rows.reduce((a, r) => Math.max(a, Number(r.sim)), 0);
+      // `top` is the best row not already in the exact list: an exact hit's
+      // own vector must not set the bar the other rows are cut against.
+      const top = rows.reduce((a, r) => (shown.has(`${r.src_table}\u0000${r.record_id}`) ? a : Math.max(a, Number(r.sim))), 0);
       const byTable = new Map();
       const pool = [];
       for (const r of rows) {

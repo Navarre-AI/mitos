@@ -242,14 +242,18 @@ add("meaning (AI)", "coffee pods", "products", "PR0014", { why: "the words are i
 add("meaning (AI)", "Greek Matt", "people", "P0002", { why: "the words are in the note; no AI needed" });
 
 // ---- non-Latin -------------------------------------------------------------------------------
-// The sample already holds a Greek and a Cyrillic record. Chinese records were
-// not added: a new person would change ids and counts the `npm test` cases use.
+// The sample holds Greek (P0002, P0201), Cyrillic (P0003) and Chinese (P0202) records.
 add("non-Latin", "Ματίας", "people", "P0002");
 add("non-Latin", "Ναβάρ", "people", "P0002");
 add("non-Latin", "ΜΑΤΙΑΣ ΝΑΒΑΡ", "people", "P0002", { why: "capitals, no accents" });
 add("non-Latin", "ματιας", "people", "P0002", { why: "accent dropped" });
 add("non-Latin", "Метт Навар", "people", "P0003");
 add("non-Latin", "метт", "people", "P0003", { why: "lower case" });
+add("non-Latin", "Γιώργος Μαράκης", "people", "P0201");
+add("non-Latin", "γιωργος μαρακης", "people", "P0201", { why: "tonos dropped" });
+add("non-Latin", "乔治", "people", "P0202");
+add("non-Latin", "乔", "people", "P0202", { why: "a partial Chinese name" });
+add("meaning (AI)", "george maraki", "people", "P0202", { ai: true, why: "shares only George with the query; needs the search notes and the AI phase" });
 
 // ---- FileMaker find operators typed into a search box ---------------------------------------
 add("find operators", "\"Cardiac Clinic\"", "organizations", "O0003", { why: "a quoted phrase: quick find supports it" });

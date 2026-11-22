@@ -62,7 +62,7 @@ async function startMitos({ ai }) {
 
 
 const srv = await startMitos({ ai: true });
-const qs = ["cheap coffee","Matt","Navarre","Bob Whitfield","iphone","gaming laptop","heart clinic","boat salvage company","luxury shoes","john costa","Atlas","running shoes","noise cancelling headphones","coffee","Greek Matt","earphones","bike for commuting","Matt Navarre","Hank","shoes","laptop","cardiac","find Bob Whitfield please","electric bicycle","healthcare company in Portland"];
+const qs = ["cheap coffee","Matt","Navarre","Bob Whitfield","iphone","gaming laptop","heart clinic","boat salvage company","luxury shoes","john costa","Atlas","running shoes","noise cancelling headphones","coffee","Greek Matt","earphones","bike for commuting","Matt Navarre","Hank","shoes","laptop","cardiac","find Bob Whitfield please","electric bicycle","healthcare company in Portland","george maraki","乔治"];
 let bad = 0, joined = 0;
 for (const qq of qs) {
   const e = await srv.j(`/api/search?q=${encodeURIComponent(qq)}&limit=5`);

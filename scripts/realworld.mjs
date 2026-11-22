@@ -283,7 +283,7 @@ try {
   L.push("- Many FileMaker \"found\" cases land far down an unsorted list. Compare Position 1 and Top 3, not Found alone.");
   L.push("- The cases were written by one person (the author of the benchmark) who knows Mitos. Typos were picked as a real user might make them, not tuned to Mitos, but expect some bias toward what Mitos does.");
   if (overall.all.fm.viaNote) L.push(`- ${overall.all.fm.viaNote} of FileMaker's hits come only from the sample's note column. Check sample-data for query text left in notes.`);
-  L.push("- Chinese records were not added to the sample (it would change ids and counts the `npm test` cases rely on). The Greek and Cyrillic records already in the sample are used.", "");
+  L.push("- The sample holds Greek, Cyrillic and Chinese records (P0002, P0003, P0201, P0202).", "");
 
   L.push("## Worst Mitos misses (ranking work list)", "", "Cases where the right record was not in Mitos's first 3 (AI cases only when an AI run happened), worst first.", "");
   if (!misses.length) L.push("None.");
