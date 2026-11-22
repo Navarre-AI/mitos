@@ -20,7 +20,7 @@ import fs from "fs";
 import os from "os";
 import net from "net";
 import path from "path";
-import { spawn } from "child_process";
+import { spawn, spawnSync } from "child_process";
 import { fileURLToPath } from "url";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -268,5 +268,10 @@ try {
   exitCode = 1;
 } finally {
   stopAll();
+}
+// The recency tiebreak needs a modification stamp the sample data lacks: its own small check.
+if (!args.length || args.every((a) => a === "--all")) {
+  const rc = spawnSync(process.execPath, [path.join(ROOT, "scripts", "test-recency.mjs")], { stdio: "inherit" });
+  if (rc.status !== 0) exitCode = 1;
 }
 process.exit(exitCode);

@@ -338,6 +338,12 @@ async function indexOneTable(table, t, onEvent, summary, { onlyIds = null } = {}
         .map((c) => [c.column_name, kindOfType(c.data_type)])
     );
 
+    // The modification stamp, only when the sync already knows one for this
+    // table: the same rule it uses for incremental pulls (a timestamp column
+    // with "mod" in its name). It is a tiebreak in search, nothing else.
+    const modCol = (await sql(`SELECT column_name FROM information_schema.columns WHERE table_name='${esc(table)}' AND data_type LIKE 'TIMESTAMP%'`).catch(() => []))
+      .map((c) => c.column_name).find((n) => /mod/i.test(n)) || null;
+
     // Optional one-to-many text join (e.g. employee names into their org).
     let joined = {};
     if (t.textJoin) {
@@ -386,6 +392,7 @@ async function indexOneTable(table, t, onEvent, summary, { onlyIds = null } = {}
         id, display, sourceText,
         searchText: normalizeText(Object.values(record).join(" ")),
         titleText: normalizeText(title),
+        modified: modCol && row[modCol] ? String(row[modCol]).replace("T", " ").replace(/(Z|[+-]\d\d:?\d\d)$/, "").slice(0, 19) : null,
         nums: [...new Set(typed.nums)],
         dates: [...new Set(typed.dates)],
         emails: pad(typed.emails),
@@ -419,6 +426,7 @@ async function indexOneTable(table, t, onEvent, summary, { onlyIds = null } = {}
           source_text: it.sourceText,
           search_text: it.searchText,
           title_text: it.titleText,
+          modified: it.modified,
           nums: it.nums,
           dates: it.dates,
           emails: it.emails,

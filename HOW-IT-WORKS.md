@@ -45,6 +45,15 @@ least), ranked by how many. It only runs on an empty answer, so it can never
 bury a real hit. A mistyped email address that matched nothing is compared
 whole to each stored address (Jaro-Winkler) and listed as a close spelling.
 
+Weights are visible in `store.js` (`TITLE_WEIGHT`): a word in the title (the
+first shown field) scores on top of the same word anywhere in the record, so
+a title match always outranks a match only in a notes or description field.
+Recency is a tiebreak and nothing more: when two records tie on score and
+title length, the one modified last lists first. It needs a modification
+timestamp Mitos already knows (the field the sync uses for incremental
+pulls); the index stores it as `modified`, filled as records are re-indexed.
+Tables without one are untouched.
+
 Day and month order follows the **Date format** setting (month first by
 default). When one part cannot be a month, the data decides.
 

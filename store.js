@@ -741,6 +741,10 @@ const INDEX_COLUMNS = {
   search_text: "VARCHAR", title_text: "VARCHAR",
   nums: "DOUBLE[]", dates: "DATE[]", emails: "VARCHAR", digits: "VARCHAR",
   content_hash: "VARCHAR",
+  // The record's own modification stamp, when the table has one Mitos already
+  // knows (the field the sync uses for incremental pulls). Recency is only a
+  // tiebreak in textSearch, never a score. NULL until the record next changes.
+  modified: "TIMESTAMP",
 };
 // Filled by the optional stages after the deterministic index is written.
 // A row that changes is deleted and re-inserted without them, which is the
@@ -803,7 +807,7 @@ export async function ensureIndexTable() {
   );
   // The stage columns arrive on an index built before the stages existed.
   const have = new Set((await sql(`SELECT column_name FROM information_schema.columns WHERE table_name='mitos_index'`).catch(() => [])).map((c) => c.column_name));
-  const missing = Object.entries(STAGE_COLUMNS).filter(([c]) => !have.has(c));
+  const missing = Object.entries({ ...STAGE_COLUMNS, modified: INDEX_COLUMNS.modified }).filter(([c]) => !have.has(c));
   // (An index from the one build that put a `vec` column on this table
   // keeps it, all NULL: dropping it would rewrite the table on a small box.
   // The next full rebuild loses it.)
@@ -1069,13 +1073,18 @@ function termSql(t, enrichTables) {
     if (t.mode === "contains") return `(${L("search_text", `%${l}%`)} OR ${L(ENRICH, `%${l}%`)})`;
     return `(${L("search_text", `% ${l}%`)} OR ${L(ENRICH, `% ${l}%`)})`; // start, and phrase (words in order, last one word-start)
   };
-  const score = (w) => `(${level("search_text", w)} + 2 * ${level("title_text", w)} + (CASE WHEN ${L(ENRICH, `% ${like(w)}%`)} THEN 1 ELSE 0 END))`;
+  // Field weights (R6): a word found anywhere in the record scores its level
+  // (3 whole word .. 1 inside); found in the title (the first shown field) it
+  // scores TITLE_WEIGHT times that again on top. So a word in the title always
+  // beats the same word only in a notes or description field.
+  const score = (w) => `(${level("search_text", w)} + ${TITLE_WEIGHT} * ${level("title_text", w)} + (CASE WHEN ${L(ENRICH, `% ${like(w)}%`)} THEN 1 ELSE 0 END))`;
   return {
     where: `(${words.map(where).join(" OR ")})`,
     score: words.length === 1 ? score(words[0]) : `greatest(${words.map(score).join(", ")})`,
   };
 }
 
+const TITLE_WEIGHT = 2;
 const tableFilter = (tables) => tables && tables.length ? ` AND src_table IN (${tables.map((n) => `'${esc(n)}'`).join(",")})` : "";
 
 export async function textSearch(plan, { perTable = 5, tables, enrichTables = null } = {}) {
@@ -1174,8 +1183,8 @@ export async function textSearch(plan, { perTable = 5, tables, enrichTables = nu
             ${hits} AS hits, ${score} AS score
      FROM mitos_index
      WHERE (${where})${tableFilter(tables)}
-     QUALIFY row_number() OVER (PARTITION BY src_table ORDER BY score DESC, ${order}length(title_text), record_id) <= ${Number(perTable)}
-     ORDER BY src_table, score DESC, ${order}length(title_text), record_id`,
+     QUALIFY row_number() OVER (PARTITION BY src_table ORDER BY score DESC, ${order}length(title_text), modified DESC NULLS LAST, record_id) <= ${Number(perTable)}
+     ORDER BY src_table, score DESC, ${order}length(title_text), modified DESC NULLS LAST, record_id`,
     { safe }
   );
 }

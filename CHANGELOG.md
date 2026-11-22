@@ -7,6 +7,8 @@ Newest first. The commit log has the detail; this is the story.
 - **Most-words fallback.** When every word must match and nothing does, Mitos drops filler words ("find Bob Whitfield please"), then falls back to records with at least half the words, ranked by how many. Only on an empty answer.
 - **Find more.** Month names read as dates ("March 4, 2019", "4 March 2019", "May 2026" as a month range); a slip inside an email address finds the close address; Mathieu joins Matt and Shivawn joins Siobhan in the name list; `==exact title` and `W*field` (letters inside one word) join `=`, `*` and "phrase". Word-start prefixes and plain-typed accents already worked and now have test cases. A general phonetic matcher was not built: no small dependency-free rule gets Siobhan right, so the name list carries those spellings.
 
+- **Field weights and recency.** The title weight is named and tested (a title match beats a notes-only match). Records that tie on score and title length now list the most recently modified first, only for tables with a modification timestamp the sync already uses; `npm test` checks it in `scripts/test-recency.mjs`.
+
 ## 1.1.0, 2026-11-20
 
 The first release Matt calls finished. There is no 1.0: it went from 0.9.4 straight here.

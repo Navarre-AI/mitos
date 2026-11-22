@@ -233,4 +233,9 @@ add("operators", "W*field", { table: "people", ids: ["P0004"], why: "* inside a 
 add("operators", "\"Matt Navarre\"", { table: "people", ids: ["P0001"] });
 add("operators", "*field", { table: "people", ids: ["P0004"], why: "leading * is inside-a-word" });
 
+// ---- 1.2 field weights (R6) ----
+add("weights", "Matt Navarre", { table: "people", ids: ["P0001"], rank: 1, pctOrder: true, why: "the name in the title field beats the same words only in a note" });
+add("weights", "Matt Navarre", { table: "people", all: ["P0001", "P0002", "P0003"], rank: 5, why: "the two rows whose note says Matt Navarre are still listed, below" });
+// Recency (R6) is a tiebreak on a modification stamp the sample data does not have: scripts/test-recency.mjs.
+
 export const CASES = C;
