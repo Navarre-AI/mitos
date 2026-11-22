@@ -55,6 +55,13 @@ add("non-Latin", "george", { table: "people", ids: ["P0201", "P0202", "P0203"], 
 add("non-Latin", "乔治 Martin", { table: "people", ids: ["P0203"], why: "a Chinese first name reaches the Latin record through the name table" });
 add("non-Latin", "George Martin", { table: "people", ids: ["P0203"], best: "P0203", why: "Latin is untouched" });
 
+// ---- house words: rules the test run saves (HOUSE_RULES in scripts/test.mjs) ----
+add("house words", "kicks", { table: "products", ids: ["PR0001"], reason: "kicks as canvas sneakers", why: "a house rule: one word, a phrase side" });
+add("house words", "ebike", { table: "products", ids: ["PR0020"], reason: "ebike as e mountain bike" });
+add("house words", "electric mountain bike", { table: "products", ids: ["PR0020"], reason: "as e mountain bike", why: "the whole query is a side of the rule" });
+add("house words", "cb", { table: "products", ids: ["PR0015"], reason: "cb as cold brew", why: "case is ignored on both sides" });
+add("house words", "Canvas Sneakers", { table: "products", ids: ["PR0001"], why: "a rule never takes away what the plain words find" });
+
 // ---- nicknames: the name table maps short forms to formal ones ----
 add("nicknames", "Bob Whitfield", { table: "people", ids: ["P0004"], best: "P0004" });
 add("nicknames", "Peg Halloran", { table: "people", ids: ["P0005"], best: "P0005" });

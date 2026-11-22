@@ -993,6 +993,17 @@ for (const id of ["dateFormat", "syncEvery"]) {
     } catch (e) { prefSaved("Not saved: " + (e.message || e)); }
   });
 }
+// House words (R5): saves when the box loses focus, like the other preferences.
+$("houseWords").addEventListener("change", async () => {
+  const note = $("houseNote");
+  try {
+    const r = await postJson("/api/config", { houseWords: $("houseWords").value });
+    if (r.error) throw new Error(r.error);
+    const n = $("houseWords").value.split("\n").filter((l) => l.split("=").filter((x) => x.trim()).length >= 2).length;
+    note.textContent = n ? `Saved. ${n} rule${n === 1 ? "" : "s"} in use.` : "Saved.";
+  } catch (e) { note.textContent = "Not saved: " + (e.message || e); }
+  clearTimeout(note.t); note.t = setTimeout(() => { note.textContent = ""; }, 3000);
+});
 document.querySelectorAll("#themeOpt button").forEach((b) => { b.onclick = () => { try { localStorage.setItem("mitos_theme", b.dataset.theme); } catch {} applyTheme(b.dataset.theme); }; });
 if (window.matchMedia) window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => applyTheme(themeChoice()));
 
@@ -1050,6 +1061,7 @@ async function loadConfig() {
     paintCols();
     $("syncEvery").value = String(cfg.syncEvery || 0);
     $("dateFormat").value = cfg.dateFormat === "dmy" ? "dmy" : "mdy";
+    if (document.activeElement !== $("houseWords")) $("houseWords").value = cfg.houseWords || "";
     $("lastSync").textContent = cfg.index.builtAt ? "last synced " + ago(cfg.index.builtAt) : "";
     $("lastSync").title = cfg.index.builtAt ? new Date(cfg.index.builtAt).toLocaleString() : "";
     // AI tab: the switch scopes the card; it opens on the naming model's provider.

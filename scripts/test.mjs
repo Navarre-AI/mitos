@@ -33,6 +33,7 @@ const COMPARE = opt("--compare");
 const SHOW = opt("--show");
 const ONLY = opt("--group") ? new Set(opt("--group").split(",")) : null;
 const HARD_LIMIT_MS = 55000;
+const HOUSE_RULES = "kicks = canvas sneakers\nebike = e-mountain bike = electric mountain bike\nCB = cold brew\n# a comment line\nsolo";
 
 // ---- start the server -------------------------------------------------------------------
 const freePort = () => new Promise((res, rej) => {
@@ -82,6 +83,8 @@ async function startMitos() {
     await sleep(100);
   }
   if (!/sample mode/.test(log)) { await sleep(300); if (!/sample mode/.test(log)) throw new Error("Mitos did not report sample mode:\n" + log.slice(-800)); }
+  // The house word list (R5), saved the way Settings saves it; the "house words" cases use these rules.
+  await j("/api/config", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ houseWords: HOUSE_RULES }) });
   await j("/api/index/sync", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
   for (let i = 0; i < 300; i++) {
     if (exited) throw new Error("Mitos exited while indexing:\n" + log.slice(-800));
@@ -128,6 +131,10 @@ function judge(c, data) {
     const miss = c.exact.filter((x) => !got.includes(x)), extra = got.filter((x) => !c.exact.includes(x));
     rank = Math.min(...c.exact.map((id) => (got.indexOf(id) < 0 ? 99 : got.indexOf(id) + 1))); if (rank === 99) rank = null;
     if (miss.length || extra.length) why.push(`${c.table} gave [${got.join(",")}], expected exactly [${c.exact.join(",")}]`);
+  }
+  if (c.reason) { // some row in the table says this in its reason (`why`)
+    const g = groupOf(data, c.table);
+    if (!(g?.results || []).some((r) => (r.why || []).join(" ; ").includes(c.reason))) why.push(`no reason says "${c.reason}"`);
   }
   for (const t of c.notTables || []) if (groupOf(data, t)) why.push(`also searched ${t}`);
   for (const id of c.notIds || []) if ((data.merged || []).some((m) => m.id === id)) why.push(`${id} should not appear`);

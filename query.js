@@ -122,19 +122,53 @@ export function nameGroups() {
 }
 export const resetNameGroups = () => { nameGroupsCache = null; };
 
+// --- The house word list (R5) --------------------------------------------------------
+// An admin's own synonyms and abbreviations, one rule a line in Settings:
+//   DSLR = digital SLR camera
+//   PO = purchase order = purchase requisition
+// Every side of a rule means the same thing. It reuses the name table's
+// "also" path: a typed word that is one side also matches the others (a
+// side of several words is matched as a phrase), and the reason says so
+// ("dslr as digital slr camera"). A whole query that equals a multi-word side
+// ("purchase order") reads as that phrase and also matches the short forms.
+let houseText = "", houseMap = new Map();
+export function parseHouseWords(text) {
+  const map = new Map();
+  for (const line of String(text || "").split(/\r?\n/)) {
+    const sides = [...new Set(line.replace(/^\s*(#|\/\/).*$/, "").split("=").map((x) => tokenize(normalizeText(x)).join(" ")).filter(Boolean))];
+    if (sides.length < 2) continue;
+    for (const a of sides) {
+      const set = map.get(a) || new Set();
+      for (const b of sides) if (b !== a) set.add(b);
+      map.set(a, set);
+    }
+  }
+  return map;
+}
+// Cheap to call on every search: the rules are parsed again only when the text changes.
+export function setHouseWords(text) {
+  const t = String(text || "");
+  if (t !== houseText) { houseText = t; houseMap = parseHouseWords(t); }
+}
+// Every other form of a word: the name table's and the house list's.
+const alsoOf = (w) => {
+  const out = new Set();
+  for (const x of nameGroups().get(w) || []) if (x !== w) out.add(x);
+  for (const x of houseMap.get(w) || []) if (x !== w) out.add(x);
+  return [...out];
+};
+
 // The text a query is embedded as: the typed words, then the name table's
 // other forms of any first name in it ("george maraki" also "giorgos γιωργος
 // 乔治"). A vector model rarely sees that 乔治 is George; the name table does.
 // Non-Latin forms go first, six extras at most. The exact search never sees this.
 export function nameVariants(text) {
-  const groups = nameGroups();
   const words = tokenize(normalizeText(text));
   const have = new Set(words);
   const extra = [];
   for (const w of words) {
-    const g = groups.get(w);
-    if (!g) continue;
-    const others = [...g].filter((x) => !have.has(x));
+    const others = alsoOf(w).filter((x) => !have.has(x));
+    if (!others.length) continue;
     others.sort((a, b) => Number(/^[\x00-\x7f]+$/.test(a)) - Number(/^[\x00-\x7f]+$/.test(b)));
     for (const x of others.slice(0, 6)) { have.add(x); extra.push(x); }
   }
@@ -234,7 +268,6 @@ export function parseQuery(raw, opts = {}) {
   const terms = [];
   const re = /"([^"]+)"|(\S+)/g;
   let m;
-  const groups = nameGroups();
   // ==words (FileMaker's exact match): the record's title is exactly these
   // words, no name-table forms, no look-alikes.
   let exact = null;
@@ -264,11 +297,16 @@ export function parseQuery(raw, opts = {}) {
     if (!words.length) continue;
     // A token like "555-1234" normalizes to two words; each must match.
     for (const w of words) {
-      const also = groups.has(w) ? [...groups.get(w)].filter((x) => x !== w) : [];
-      terms.push({ word: w, mode, also });
+      terms.push({ word: w, mode, also: alsoOf(w) });
     }
   }
   if (!terms.length) return { kind: "empty" };
+  // The whole query is a multi-word side of a house rule: one phrase, with the
+  // other sides as its alternatives.
+  if (houseMap.size && terms.length > 1 && terms.every((t) => t.mode === "start")) {
+    const whole = terms.map((t) => t.word).join(" ");
+    if (houseMap.has(whole)) return { kind: "text", terms: [{ word: whole, mode: "phrase", also: [...houseMap.get(whole)] }] };
+  }
   return { kind: "text", terms };
 }
 

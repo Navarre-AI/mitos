@@ -63,6 +63,11 @@ The name table ships with common English nicknames plus some Greek, Chinese and 
 European forms (`names.config.js`: george is γιώργος is 乔治). Write `data/names.json` as an array of
 arrays to replace it.
 
+Your own words go in **House words** (Settings, General): one rule a line,
+`DSLR = digital SLR camera` or `PO = purchase order = purchase requisition`.
+A rule works like a name-table group, both ways, and shows in the reason
+(`dslr as digital slr camera`). It takes effect at once; nothing re-syncs.
+
 ### The stages (switches on top of the exact search)
 
 The exact search above always runs first and shows at once. Five stages sit

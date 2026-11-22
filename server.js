@@ -15,6 +15,7 @@ import { indexStats, stageStats, sql, storeExists, ensureIndexTable, vectorSearc
 import { buildIndex, indexManifest, isBuilding, isRefreshing, tablesConfig, MITOS_JSON_FIELD, refreshRecords } from "./indexer.js";
 import { semanticOn, semanticTables, semanticDefault } from "./semantic.js";
 import { search, forgetSearchCache } from "./search.js";
+import { setHouseWords } from "./query.js";
 import { namingInfo, keyStatus, isEmbeddingModel, askModel, roleModels, PROVIDERS, STAGE_NAMES, STAGE_DEFAULTS, STAGE_LIMITS, stages, stageReady, keyForProvider, providerOf, modelId, chat, estimateCost, modelListCache, refreshModelList, ensureModelList, RECOMMENDED_JOB, autoModel, modelsView, curatedReady, refreshCurated, curatedStatus, refreshAllModels } from "./ai.js";
 import { vectorKey, embedInfo, embedQuery } from "./embed.js";
 import { defaultEnrichPrompt, promptFor, enrichKeyFor, enrichPreview, readPasses } from "./stages.js";
@@ -536,6 +537,7 @@ app.get("/api/config", async (_req, res) => {
     tables: cfg.tables ? Object.fromEntries(Object.entries(cfg.tables).map(([n, t]) => [n, { ...t, semantic: semanticOn(n, t) }])) : null,
     syncEvery: Number(cfg.syncEvery || 0),
     dateFormat: cfg.dateFormat === "dmy" ? "dmy" : "mdy",
+    houseWords: String(cfg.houseWords || ""),
     displayNames: displayNamesMap(),
     slugs: slugMap(),
     savedAt: cfg.savedAt || null,
@@ -648,6 +650,13 @@ app.post("/api/config", async (req, res) => {
       const cfg = readConfig();
       cfg.dateFormat = req.body.dateFormat === "dmy" ? "dmy" : "mdy";
       writeConfig(cfg);
+    }
+    if (req.body?.houseWords !== undefined) {
+      const cfg = readConfig();
+      const text = String(req.body.houseWords || "").replace(/\r\n?/g, "\n").slice(0, 20000).trim();
+      if (text) cfg.houseWords = text; else delete cfg.houseWords;
+      writeConfig(cfg);
+      setHouseWords(text);
     }
     if (req.body?.syncEvery !== undefined) {
       const cfg = readConfig();
@@ -1324,6 +1333,7 @@ function undouble(q) {
 // runs both phases in one response (scripts and Insert From URL).
 function searchOptions(req) {
   const cfg = readConfig();
+  setHouseWords(cfg.houseWords || "");
   const tables = req.query.tables ? String(req.query.tables).split(",").map((s) => s.trim()).filter(Boolean) : null;
   const stageOverride = req.query.stages !== undefined ? new Set(String(req.query.stages).split(",").map((s) => s.trim()).filter(Boolean)) : null;
   return {

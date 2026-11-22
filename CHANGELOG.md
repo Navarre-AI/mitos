@@ -13,6 +13,8 @@ Newest first. The commit log has the detail; this is the story.
 
 - **Greek and Chinese.** The sample gains three people (P0201 Γιώργος Μαράκης, P0202 乔治·陈, P0203 George Martin). Greek final sigma (ς) is the same letter as σ on both sides, so a word typed either way finds the record; accents and capitals already worked. A Chinese name finds by its characters, and one character (乔) finds the name it starts. The name table now spans scripts (george = γιώργος = 乔治; john = γιάννης = 约翰), and the semantic query is embedded with those other forms added, since a vector model rarely knows 乔治 is George. A semantic row's cut-off no longer takes its bar from an exact hit's own vector. "george maraki" with Enrichment, Vectors and the reranker on lists Γιώργος Μαράκης (best), George Martin (close spelling) and 乔治·陈 (semantic, well down the list); vectors alone keep 乔治·陈 far from that query.
 
+- **House words.** Settings, General tab: a plain box, one rule a line (`DSLR = digital SLR camera`, `PO = purchase order = purchase requisition`). It reuses the name table's "also" path, so a rule only adds matches and never removes one, and the reason shows it ("dslr as digital slr camera"). A whole query that equals a multi-word side reads as that phrase and finds the short forms. Stored as `houseWords` in `config.json`; applied at search time, so no re-sync.
+
 ## 1.1.0, 2026-11-20
 
 The first release Matt calls finished. There is no 1.0: it went from 0.9.4 straight here.
