@@ -15,6 +15,8 @@ Newest first. The commit log has the detail; this is the story.
 
 - **House words.** Settings, General tab: a plain box, one rule a line (`DSLR = digital SLR camera`, `PO = purchase order = purchase requisition`). It reuses the name table's "also" path, so a rule only adds matches and never removes one, and the reason shows it ("dslr as digital slr camera"). A whole query that equals a multi-word side reads as that phrase and finds the short forms. Stored as `houseWords` in `config.json`; applied at search time, so no re-sync.
 
+- **Failed searches, and a click tiebreak.** Log tab: a "Failed searches" list, newest first with counts: searches that found nothing, and (once clicks are being recorded) searches that found something nobody clicked. A search the person kept typing on, and the page's second (AI) call for the same words, count once. Clicks were already recorded (`clicks.jsonl`), so they now break ties: two records that score the same list the one people clicked after that same query first. Never above a better match, and the shown % still never rises down a list. `GET /api/log/failed` has the same list.
+
 ## 1.1.0, 2026-11-20
 
 The first release Matt calls finished. There is no 1.0: it went from 0.9.4 straight here.

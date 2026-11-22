@@ -221,6 +221,25 @@ try {
     results.push({ key, group: c.group, q: c.q, level: c.level === "should" ? "should" : "must", empty: Boolean(c.empty), note: c.why || "", ...r });
   }
 
+  // ---- the failed-searches report (R4): a search with no result, and (once a click is
+  // recorded) a search with results nobody clicked. A click on another query does not count.
+  if (!ONLY) {
+    const go = (q) => j(`/api/search?q=${encodeURIComponent(q)}`);
+    await go("xqzv nothing here"); await go("Hank"); await go("Murphy");
+    await j("/api/click", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ query: "Murphy", table: "people", record_id: "P0007", rank: 1 }) });
+    await sleep(200);
+    const f = await j("/api/log/failed");
+    const row = (q) => (f.rows || []).find((r) => r.query === q);
+    const checks = [
+      [row("xqzv nothing here")?.zero === 1, "a search with no result is listed once"],
+      [row("Hank")?.noClick >= 1, "a search with results and no click is listed"],
+      [!row("Murphy"), "a search that got its click is not listed"],
+      [f.clicking === true, "the report says clicks are being recorded"],
+      [(f.rows || []).every((r, i, a) => !i || a[i - 1].last >= r.last), "newest first"],
+    ];
+    for (const [ok, what] of checks) { results.push({ key: "failed|" + what, group: "failed searches", q: what, level: "must", empty: false, note: "", pass: ok, why: ok ? [] : [what], rank: null, hasTarget: false, tableFirst: null, zero: false }); }
+  }
+
   // ---- per case lines
   const fails = results.filter((r) => !r.pass);
   for (const r of results) {
@@ -278,7 +297,9 @@ try {
 }
 // The recency tiebreak needs a modification stamp the sample data lacks: its own small check.
 if (!args.length || args.every((a) => a === "--all")) {
-  const rc = spawnSync(process.execPath, [path.join(ROOT, "scripts", "test-recency.mjs")], { stdio: "inherit" });
-  if (rc.status !== 0) exitCode = 1;
+  for (const f of ["test-recency.mjs", "test-clicks.mjs"]) {
+    const rc = spawnSync(process.execPath, [path.join(ROOT, "scripts", f)], { stdio: "inherit" });
+    if (rc.status !== 0) exitCode = 1;
+  }
 }
 process.exit(exitCode);

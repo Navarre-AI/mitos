@@ -53,6 +53,11 @@ title length, the one modified last lists first. It needs a modification
 timestamp Mitos already knows (the field the sync uses for incremental
 pulls); the index stores it as `modified`, filled as records are re-indexed.
 Tables without one are untouched.
+Clicks break ties too: when two records score the same, the one people clicked
+after that same query (the Log tab keeps those clicks) lists first. It never lifts a
+record above a better match. The Log tab's **Failed searches** list shows what
+found nothing, and what found something nobody clicked: the place to look for
+words your data does not use (and for rules to add to House words).
 
 Day and month order follows the **Date format** setting (month first by
 default). When one part cannot be a month, the data decides.

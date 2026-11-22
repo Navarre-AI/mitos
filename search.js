@@ -59,7 +59,7 @@ async function cachedStats() {
 export function forgetSearchCache() { statsCache = { at: 0, value: null }; }
 
 export async function search(query, opts = {}) {
-  const { limit = 5, dateFormat = "mdy", tables = null, stageOverride = null, phase = "exact", tablesCfg = {}, labels = {} } = opts;
+  const { limit = 5, dateFormat = "mdy", tables = null, stageOverride = null, phase = "exact", tablesCfg = {}, labels = {}, clicks = null } = opts;
   const t0 = Date.now();
   const on = activeStages(stageOverride);
   const stats = await cachedStats();
@@ -69,7 +69,7 @@ export async function search(query, opts = {}) {
   // Which tables' search notes may match: the stage on, and the table's
   // own switch on. Notes of the others stay stored and stay quiet.
   const enrichTables = stages().enrich.on ? Object.keys(tablesCfg || {}).filter((n) => tablesCfg[n]?.enrich?.on) : [];
-  const exact = await runExact(query, { limit, dateFormat, tables, fuzzy: on.fuzzy, stageCfg: stages(), enrichTables });
+  const exact = await runExact(query, { limit, dateFormat, tables, fuzzy: on.fuzzy, stageCfg: stages(), enrichTables, clicks });
   // Which model stages have anything to do here. A typed number, date,
   // email or phone is already understood and is a set, not a pick; one
   // plain word needs no reading. Those skip the round trips.
@@ -83,7 +83,7 @@ export async function search(query, opts = {}) {
     result.best = on.best ? await deterministicBest(result) : null;
     return result;
   }
-  const ai = await runAi(query, exact, { limit, dateFormat, tables, on: { ...on, understand: pending.includes("understand"), rerank: pending.includes("rerank"), semantic: pending.includes("semantic") }, tablesCfg, labels });
+  const ai = await runAi(query, exact, { limit, dateFormat, tables, on: { ...on, understand: pending.includes("understand"), rerank: pending.includes("rerank"), semantic: pending.includes("semantic") }, tablesCfg, labels, clicks });
   result = { ...result, ...ai.out, stages: { ...result.stages, ...ai.stages, pending: [] } };
   result.timings = { ...exact.timings, ...ai.timings, totalMs: Date.now() - t0 };
   return result;
@@ -94,7 +94,7 @@ export async function search(query, opts = {}) {
 // fallback for a query that found nothing, to drop them and try again.
 const FILLER = new Set(["find", "please", "the", "a", "an", "contact", "show", "me", "for", "of", "to", "with", "and", "my", "get", "search", "look", "up", "lookup", "about", "info", "record", "records", "who", "is", "i", "want", "need", "where"]);
 
-async function runExact(query, { limit, dateFormat, tables, fuzzy, stageCfg, enrichTables = [] }) {
+async function runExact(query, { limit, dateFormat, tables, fuzzy, stageCfg, enrichTables = [], clicks = null }) {
   const t0 = Date.now();
   let plan = parseQuery(query, { dateFormat });
   const out = { kind: plan.kind, searched: describePlan(plan), plan: publicPlan(plan), words: plan.kind === "text" ? plan.terms.map((t) => t.word) : [] };
@@ -134,6 +134,7 @@ async function runExact(query, { limit, dateFormat, tables, fuzzy, stageCfg, enr
       display: JSON.parse(r.display),
       _title: r.title_text || "",
       _tw: why.filter((w) => w.endsWith("in the title")).length, // query words found in the record's title
+      _clicks: clicks?.get(`${r.src_table}\u0000${r.record_id}`) || 0, // clicks after this same query: a tiebreak (R4)
       _ord: ord++, // the SQL's order: score, then the matched value (a range lists lowest first), then title length
     });
   }
@@ -200,7 +201,7 @@ const RRF_K = 60;
 const RRF_WEIGHT = { exact: 1.0, near: 0.55, weak: 0.25, semantic: 0.5 };
 const listOf = (r) => (r.via === "exact" ? "exact" : r.via === "fuzzy" ? ((r.sim || 0) >= 0.95 ? "near" : "weak") : "semantic");
 function balance(byTable, limit) {
-  const tie = (a, b) => (a._ord !== undefined && b._ord !== undefined ? a._ord - b._ord : 0) || a._title.length - b._title.length || String(a.id).localeCompare(String(b.id));
+  const tie = (a, b) => ((b._clicks || 0) - (a._clicks || 0)) || (a._ord !== undefined && b._ord !== undefined ? a._ord - b._ord : 0) || a._title.length - b._title.length || String(a.id).localeCompare(String(b.id));
   const within = (a, b) => (a.via === "exact" ? (b.score - a.score) || tie(a, b) : ((b.sim || 0) - (a.sim || 0)) || tie(a, b));
   return [...byTable.entries()]
     .map(([table, results]) => {
@@ -230,7 +231,7 @@ function mergeGroups(groups) {
   }
   return merged;
 }
-const publicRow = ({ _title, _ord, _tw, ...r }) => r;
+const publicRow = ({ _title, _ord, _tw, _clicks, ...r }) => r;
 const publicGroup = (g) => ({ table: g.table, results: g.results.map(publicRow) });
 
 // The % at the right of each row, and the order of the rows, are one number.
@@ -267,7 +268,7 @@ const AI_BUDGET_MS = 6000;
 const SEM_POOL = 20;      // vector rows read per table when the reranker is on
 const RERANK_SEM_MAX = 10; // of those, how many the reranker is shown besides the exact rows
 
-async function runAi(query, exact, { limit, dateFormat, tables, on, tablesCfg, labels }) {
+async function runAi(query, exact, { limit, dateFormat, tables, on, tablesCfg, labels, clicks = null }) {
   const timings = {};
   const info = {};
   const cfg = stages();
@@ -297,7 +298,7 @@ async function runAi(query, exact, { limit, dateFormat, tables, on, tablesCfg, l
           const plan = parseQuery(u.query, { dateFormat });
           const restrict = hintTables.length && plan.kind !== "text" ? hintTables : tables;
           const enrichTables = cfg.enrich.on ? Object.keys(tablesCfg || {}).filter((n) => tablesCfg[n]?.enrich?.on) : [];
-          const again = await runExact(u.query, { limit, dateFormat, tables: restrict, fuzzy: on.fuzzy, stageCfg: cfg, enrichTables });
+          const again = await runExact(u.query, { limit, dateFormat, tables: restrict, fuzzy: on.fuzzy, stageCfg: cfg, enrichTables, clicks });
           if (changed) rewritten = u.query;
           // The same record found by both keeps its stronger row: an exact
           // hit on the rewrite beats a close spelling on the typed words.

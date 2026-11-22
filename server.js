@@ -11,7 +11,7 @@ import os from "os";
 import path from "path";
 import { fileURLToPath } from "url";
 import { fmConfigured, fmConnection, setConnection, resetConnection, withConnection, checkAuth, listDatabases, fetchSchema, fetchCounts, sampleRows, fmReason } from "./fm.js";
-import { indexStats, stageStats, sql, storeExists, ensureIndexTable, vectorSearch, passEstimate, clearEnrichment, freeDiskBytes, totalDiskBytes, storeManifest, dropTableCopies, wipeCopies, wipeIndex, wipeNotes, wipeAllLocalData, deleteAllVectors, deleteTableVectors, vectorTotals } from "./store.js";
+import { normalizeText, indexStats, stageStats, sql, storeExists, ensureIndexTable, vectorSearch, passEstimate, clearEnrichment, freeDiskBytes, totalDiskBytes, storeManifest, dropTableCopies, wipeCopies, wipeIndex, wipeNotes, wipeAllLocalData, deleteAllVectors, deleteTableVectors, vectorTotals } from "./store.js";
 import { buildIndex, indexManifest, isBuilding, isRefreshing, tablesConfig, MITOS_JSON_FIELD, refreshRecords } from "./indexer.js";
 import { semanticOn, semanticTables, semanticDefault } from "./semantic.js";
 import { search, forgetSearchCache } from "./search.js";
@@ -1343,6 +1343,7 @@ function searchOptions(req) {
     stageOverride,
     tablesCfg: cfg.tables || tablesConfig(),
     labels: displayNamesMap(),
+    clicks: clicksFor(String(req.query.q || "")),
   };
 }
 function labelResult(result) {
@@ -1789,6 +1790,75 @@ app.post("/api/tables/drop", async (req, res) => {
 function appendLog(file, obj) {
   fs.appendFile(path.join(DATA_DIR, file), JSON.stringify(obj) + "\n", () => {});
 }
+
+// Reads the last `max` lines of a JSONL log (whole file is fine at this scale).
+function readJsonl(file, max = 50000) {
+  try {
+    return fs.readFileSync(path.join(DATA_DIR, file), "utf8").trim().split("\n").filter(Boolean).slice(-max)
+      .map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+  } catch { return []; }
+}
+const queryKey = (q) => normalizeText(q).trim();
+
+// Click boost (R4): for one typed query, how many times each record was clicked
+// after that same query. The search uses it as a tiebreak only: it can order two
+// records that score the same, never lift one above a better match. Cached by
+// the file's size and time, so a search does not re-read the log.
+let clickCache = { sig: "", byQuery: new Map() };
+function clicksFor(query) {
+  let sig = "";
+  try { const st = fs.statSync(path.join(DATA_DIR, "clicks.jsonl")); sig = st.size + ":" + st.mtimeMs; } catch { return null; }
+  if (sig !== clickCache.sig) {
+    const byQuery = new Map();
+    for (const c of readJsonl("clicks.jsonl", 20000)) {
+      if (!c.table || !c.record_id) continue;
+      const k = queryKey(c.query);
+      if (!k) continue;
+      if (!byQuery.has(k)) byQuery.set(k, new Map());
+      const m = byQuery.get(k), id = `${c.table}\u0000${c.record_id}`;
+      m.set(id, (m.get(id) || 0) + 1);
+    }
+    clickCache = { sig, byQuery };
+  }
+  return clickCache.byQuery.get(queryKey(query)) || null;
+}
+
+// Failed searches (R4), newest first with counts: searches that found nothing
+// and, only once clicks are being recorded, searches that found something
+// nobody clicked. A search the person kept typing on (the next one, seconds
+// later, starts with it or is it with letters taken off) is not a failure, and
+// the page's two calls per search (exact, then AI) count once.
+function failedSearches() {
+  const searches = readJsonl("searches.jsonl").filter((s) => !s.error && s.query && !s.stagesOverride);
+  const clicks = readJsonl("clicks.jsonl", 20000);
+  const clicking = clicks.length > 0;
+  const quick = 20000, clickWindow = 600000;
+  const by = new Map(); // key -> { query, zero, noClick, last, tables }
+  for (let i = 0; i < searches.length; i++) {
+    const s = searches[i], k = queryKey(s.query), t = Date.parse(s.ts);
+    if (!k || !Number.isFinite(t)) continue;
+    let moved = false;
+    for (let j = i + 1; j < searches.length; j++) {
+      const n = searches[j], tj = Date.parse(n.ts);
+      if (tj - t > quick) break;
+      const kj = queryKey(n.query);
+      if (kj !== k && (kj.startsWith(k) || k.startsWith(kj))) { moved = true; break; }
+      if (kj === k) { moved = true; break; } // the same search again a moment later: counted at its last call
+    }
+    if (moved) continue;
+    const zero = !(s.results > 0);
+    let noClick = false;
+    if (!zero && clicking) noClick = !clicks.some((c) => queryKey(c.query) === k && Date.parse(c.ts) >= t - 5000 && Date.parse(c.ts) - t < clickWindow);
+    if (!zero && !noClick) continue;
+    const e = by.get(k) || { query: s.query, zero: 0, noClick: 0, last: s.ts };
+    if (zero) e.zero++; else e.noClick++;
+    if (s.ts > e.last) { e.last = s.ts; e.query = s.query; }
+    by.set(k, e);
+  }
+  const rows = [...by.values()].sort((a, b) => (a.last < b.last ? 1 : -1)).slice(0, 200);
+  return { rows, clicking, totals: { zero: rows.reduce((a, r) => a + r.zero, 0), noClick: rows.reduce((a, r) => a + r.noClick, 0) } };
+}
+app.get("/api/log/failed", (_req, res) => res.json(failedSearches()));
 
 app.post("/api/click", (req, res) => {
   const { query, table, record_id, rank, score } = req.body || {};

@@ -903,7 +903,7 @@ function showTab(t) {
   // Only the Tables tab has a button that saves: Save and sync. Every other
   // tab saves itself the moment something changes, so its bar only closes.
   $("saveAll").style.display = t === "tables" ? "" : "none";
-  if (t === "log") { loadSearchLog(); loadRecordLog(); }
+  if (t === "log") { loadSearchLog(); loadRecordLog(); loadFailed(); }
   if (t === "settings") loadAbout();
   // The Tables tab paints its list whenever it is shown and the list is
   // empty (the wizard filled scannedTables without painting) or stale (a
@@ -2243,7 +2243,28 @@ async function loadSearchLog() {
     }
   } catch (e) { $("logTotals").textContent = e.message; }
 }
-$("logRefresh").addEventListener("click", () => { loadSearchLog(); loadRecordLog(); });
+$("logRefresh").addEventListener("click", () => { loadSearchLog(); loadRecordLog(); loadFailed(); });
+
+// Failed searches (GET /api/log/failed): what people typed that found nothing, and, once
+// clicks are being recorded, what found something nobody clicked. A good list for the
+// House words box in General: each line there is a word the data does not use.
+async function loadFailed() {
+  const box = $("failRows");
+  try {
+    const d = await apiJson("/api/log/failed");
+    box.innerHTML = "";
+    if (!d.rows.length) { box.innerHTML = '<p class="intro" style="margin:0">None so far.' + (d.clicking ? "" : " Searches nobody clicked are listed once clicks are being recorded.") + "</p>"; return; }
+    for (const r of d.rows) {
+      const row = el("div", "prow");
+      const q = el("span", "pname"); q.style.width = "260px"; q.style.paddingRight = "12px"; q.textContent = r.query; q.title = r.query;
+      const mid = el("span"); mid.style.flex = "1"; mid.style.color = "var(--dim)";
+      mid.textContent = [r.zero ? r.zero + (r.zero === 1 ? " time" : " times") + ", no results" : "", r.noClick ? r.noClick + (r.noClick === 1 ? " time" : " times") + ", no click" : ""].filter(Boolean).join(" · ");
+      const when = el("span"); when.style.width = "110px"; when.style.textAlign = "right"; when.style.color = "var(--dim)"; when.textContent = ago(r.last) || ""; when.title = new Date(r.last).toLocaleString();
+      row.append(q, mid, when);
+      box.appendChild(row);
+    }
+  } catch (e) { box.textContent = e.message; }
+}
 
 // ---- Record updates: what FileMaker told Mitos about, one record at a time
 // (POST /api/records/changed, answered at once, worked off in a queue). Rows
