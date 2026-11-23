@@ -286,6 +286,7 @@
   .texp-enrich { margin-top:12px; border-top:1px solid var(--line); padding-top:10px; }
   .texp-enrich textarea { width:100%; min-height:64px; font-size:12.5px; margin-top:6px; resize:vertical; }
   /* Result rows from the fuzzy and semantic stages carry a small tag */
+  .row .tagt { font-size:10.5px; color:var(--dim); text-transform:uppercase; letter-spacing:.06em; margin-right:8px; font-weight:500; }
   .row .tagv { font-size:10.5px; color:var(--dim); border:1px solid var(--line); border-radius:9px; padding:1px 7px; margin-left:8px; font-weight:400; white-space:nowrap; }
   .row.best { border-color:var(--accent); background:rgba(217,164,65,.07); }
   .row.best .bestlbl { font-size:10.5px; color:var(--accent); text-transform:uppercase; letter-spacing:.08em; font-weight:600; margin-bottom:2px; }
@@ -589,6 +590,12 @@
             <select id="dateFormat" title="How a typed date is read when both parts fit a month">
               <option value="mdy">month/day/year</option>
               <option value="dmy">day/month/year</option>
+            </select>
+          </div>
+          <div class="set-row" style="gap:12px;padding:6px 0"><span style="font-size:13px">Results</span><span class="sp"></span>
+            <select id="resultsLayout" title="Group the results by table, or show every table in one list ranked by %">
+              <option value="grouped">Grouped by table</option>
+              <option value="mixed">One list, all tables, ranked</option>
             </select>
           </div>
           <div class="set-row" style="gap:12px;padding:6px 0"><span style="font-size:13px">Auto-sync</span><span class="sp"></span>

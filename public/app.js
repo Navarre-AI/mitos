@@ -166,6 +166,8 @@ function render(data, opts = {}) {
     }
     const title = el("div", "title");
     title.textContent = String(fields[0]?.[1] ?? res.id);
+    // In one mixed list each row says which table it is from.
+    if (extra.tableTag) { const tt = el("span", "tagt"); tt.textContent = g.label || friendly(g.table); title.prepend(tt); }
     // A row from the fuzzy or semantic stage says so, in two words, so a
     // person knows it is not what they typed.
     if (res.via === "fuzzy") { const tg = el("span", "tagv"); tg.textContent = "close spelling"; title.appendChild(tg); }
@@ -207,13 +209,26 @@ function render(data, opts = {}) {
       frag.appendChild(div);
     }
   };
-  renderGroups(data.groups);
+  // One list (the "mixed" preference): every table's rows together, ranked by
+  // the shown %. Ties keep the order the search gave them.
+  const renderMixed = (groups) => {
+    const rows = [];
+    for (const g of groups) for (const r of g.results) if (!(best && best.table === g.table && best.id === r.id)) rows.push([g, r]);
+    const order = (g, r) => { const i = allRows.findIndex((m) => m.table === g.table && m.id === r.id); return i < 0 ? 1e9 : i; };
+    rows.sort((a, b) => (pctOf(b[1]) - pctOf(a[1])) || (order(...a) - order(...b)));
+    if (!rows.length) return;
+    const div = el("div", "group");
+    for (const [g, r] of rows) div.appendChild(makeRow(g, r, { tableTag: true }));
+    frag.appendChild(div);
+  };
+  const lay = data.layout === "mixed" ? renderMixed : renderGroups;
+  lay(data.groups);
   if (nSim) {
     // Strong matches are "Semantic matches"; when even the best is weak the
     // heading says so, and the rows still show (nearest, not near).
     const h = el("div", "simhead"); h.textContent = data.similarWeak ? "Perhaps you meant" : "Semantic matches";
     frag.appendChild(h);
-    renderGroups(data.similar || []);
+    lay(data.similar || []);
   }
   $("results").innerHTML = "";
   $("results").appendChild(frag);
@@ -984,10 +999,10 @@ const applyTheme = (choice) => {
 applyTheme(themeChoice());
 // Date order and auto-sync (General tab) save themselves, like the theme.
 const prefSaved = (msg) => { $("prefNote").textContent = msg; clearTimeout(prefSaved.t); prefSaved.t = setTimeout(() => { $("prefNote").textContent = ""; }, 2500); };
-for (const id of ["dateFormat", "syncEvery"]) {
+for (const id of ["dateFormat", "syncEvery", "resultsLayout"]) {
   $(id).addEventListener("change", async () => {
     try {
-      const r = await postJson("/api/config", id === "dateFormat" ? { dateFormat: $(id).value } : { syncEvery: Number($(id).value) });
+      const r = await postJson("/api/config", id === "syncEvery" ? { syncEvery: Number($(id).value) } : { [id]: $(id).value });
       if (r.error) throw new Error(r.error);
       prefSaved("Saved.");
     } catch (e) { prefSaved("Not saved: " + (e.message || e)); }
@@ -1061,6 +1076,7 @@ async function loadConfig() {
     paintCols();
     $("syncEvery").value = String(cfg.syncEvery || 0);
     $("dateFormat").value = cfg.dateFormat === "dmy" ? "dmy" : "mdy";
+    $("resultsLayout").value = cfg.resultsLayout === "mixed" ? "mixed" : "grouped";
     if (document.activeElement !== $("houseWords")) $("houseWords").value = cfg.houseWords || "";
     $("lastSync").textContent = cfg.index.builtAt ? "last synced " + ago(cfg.index.builtAt) : "";
     $("lastSync").title = cfg.index.builtAt ? new Date(cfg.index.builtAt).toLocaleString() : "";

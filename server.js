@@ -538,6 +538,7 @@ app.get("/api/config", async (_req, res) => {
     syncEvery: Number(cfg.syncEvery || 0),
     dateFormat: cfg.dateFormat === "dmy" ? "dmy" : "mdy",
     houseWords: String(cfg.houseWords || ""),
+    resultsLayout: cfg.resultsLayout === "mixed" ? "mixed" : "grouped",
     displayNames: displayNamesMap(),
     slugs: slugMap(),
     savedAt: cfg.savedAt || null,
@@ -649,6 +650,11 @@ app.post("/api/config", async (req, res) => {
     if (req.body?.dateFormat !== undefined) {
       const cfg = readConfig();
       cfg.dateFormat = req.body.dateFormat === "dmy" ? "dmy" : "mdy";
+      writeConfig(cfg);
+    }
+    if (req.body?.resultsLayout !== undefined) {
+      const cfg = readConfig();
+      cfg.resultsLayout = req.body.resultsLayout === "mixed" ? "mixed" : "grouped";
       writeConfig(cfg);
     }
     if (req.body?.houseWords !== undefined) {
@@ -1408,6 +1414,8 @@ async function handleSearch(req, res, phase) {
     // log it as a miss.
     if (result.empty) return res.json(result);
     labelResult(result);
+    // How the page lays out the answer: one list per table, or every table in one list.
+    result.layout = readConfig().resultsLayout === "mixed" ? "mixed" : "grouped";
     logSearch(query, result, req);
     res.json(result);
   } catch (e) {
