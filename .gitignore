@@ -19,3 +19,4 @@ HANDOFF-*.md
 handoff/
 eval/sim-*.md
 !filemaker/Mitos.fmp12
+test-data/

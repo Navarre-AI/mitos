@@ -3,7 +3,10 @@
 // front door read the input as the expected kind, and no table listed in
 // `notTables` appears. Change the parser or the ranking, re-run, compare.
 //
-// Usage: npm run eval  (server must be running; MITOS_URL overrides the base)
+// Usage: npm run eval  (server must be running; MITOS_URL overrides the base;
+// EVAL_CASES=<file> runs another cases file, such as the one
+// scripts/make-test-data.mjs writes). A case's `notAny` lists strings that
+// must not show in any row of the result (the robot vacuum for "robert bolt").
 
 import fs from "fs";
 import path from "path";
@@ -13,7 +16,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BASE = process.env.MITOS_URL || "http://localhost:8080";
 const KEY = process.env.SITE_PASSWORD || "";
 
-const { cases } = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "eval", "cases.json"), "utf8"));
+const CASES = process.env.EVAL_CASES || path.join(__dirname, "..", "eval", "cases.json");
+const { cases } = JSON.parse(fs.readFileSync(CASES, "utf8"));
 
 function hitRank(data, table, expectAny) {
   const group = (data.groups || []).find((g) => g.table === table);
@@ -38,12 +42,17 @@ for (const c of cases) {
       if (c.kind && data.kind !== c.kind) error = `read as ${data.kind}, expected ${c.kind}`;
       const leaked = (c.notTables || []).filter((t) => (data.groups || []).some((g) => g.table === t));
       if (leaked.length) error = `${error ? error + "; " : ""}also searched ${leaked.join(", ")}`;
+      const rows = JSON.stringify((data.groups || []).map((g) => g.results.map((r) => r.display)));
+      const unwanted = (c.notAny || []).filter((s) => rows.includes(s));
+      if (unwanted.length) error = `${error ? error + "; " : ""}should not show ${unwanted.join(", ")}`;
     }
   } catch (e) {
     error = e.message;
   }
+  // A case with no expectAny only checks what must not show (notAny).
+  if (!error && !(c.expectAny || []).length) rank = 1;
   const mark = error ? "ERR " : rank === 1 ? "PASS" : rank ? `@${rank}  ` : "MISS";
-  console.log(`${mark}  [${c.section}] "${c.query}" -> ${c.expectAny.join(" | ")}${error ? `  (${error})` : ""}`);
+  console.log(`${mark}  [${c.section}] "${c.query}" -> ${((c.expectAny || []).join(" | ") || `not ${(c.notAny || []).join(", ")}`)}${error ? `  (${error})` : ""}`);
   results.push({ ...c, rank, error });
 }
 

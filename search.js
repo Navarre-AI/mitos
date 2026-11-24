@@ -166,11 +166,20 @@ async function runExact(query, { limit, dateFormat, tables, fuzzy, stageCfg, enr
     try {
       const minSim = Number(stageCfg.fuzzy.minSim) || 0.9;
       const fz = await fuzzySearch(words, { perTable: limit, minSim, tables });
+      // A title that holds every word typed is an exact hit the exact list had
+      // no room for, not a close spelling: "My Cat" for "cat", "Wound (Beuys
+      // meets Warhol)" for "warhol" came back tagged "close spelling" and
+      // ranked above the exact rows (2026-11-24). Leave it out.
+      const holdsAll = (title) => {
+        const t = ` ${normalizeText(title || "")} `;
+        return words.every((g) => g.some((w) => t.includes(` ${w}`)));
+      };
       let added = 0;
       for (const r of fz) {
         const k = `${r.src_table}\u0000${r.record_id}`;
         if (seen.has(k)) continue;
         seen.add(k);
+        if (holdsAll(r.title_text)) continue;
         if (!byTable.has(r.src_table)) byTable.set(r.src_table, []);
         const list = byTable.get(r.src_table);
         if (list.length >= limit && !(Number(r.sim) >= 0.95 && list.length < limit * 2)) continue;
@@ -250,11 +259,18 @@ function finishPct(out) {
       const sc = Number(r.score) || 0;
       r.pct = r.via === "exact" ? (topExact > 0 ? Math.max(1, Math.round((100 * sc) / topExact)) : 100) : Math.max(1, Math.min(99, Math.round(100 * (r.sim ?? sc))));
     }
-    // A semantic row the reranker moved into the main list never shows a % above
-    // the close or exact rows of its list, and sorts after them on a tie.
+    // A close spelling or a semantic row never shows a % above the exact rows
+    // of its list: its own similarity and an exact row's share of the top
+    // score are two scales, and sorting them together put "Coach Whistle
+    // Kettle" (98) above the real Whistler etchings (85) (2026-11-24). A
+    // semantic row the reranker moved in also stays under the close rows.
+    // Ties: exact, then close, then joined.
+    const exactFloor = Math.min(100, ...g.results.filter((r) => r.via === "exact").map((r) => r.pct));
+    for (const r of g.results) if (r.via !== "exact") r.pct = Math.min(r.pct, exactFloor);
     const floor = Math.min(100, ...g.results.filter((r) => !r.joined).map((r) => r.pct));
     for (const r of g.results) if (r.joined) r.pct = Math.min(r.pct, floor);
-    g.results = g.results.map((r, i) => [r, i]).sort((a, b) => (b[0].pct - a[0].pct) || (Number(!!a[0].joined) - Number(!!b[0].joined)) || (a[1] - b[1])).map(([r]) => r);
+    const cls = (r) => (r.via === "exact" ? 0 : r.joined ? 2 : 1);
+    g.results = g.results.map((r, i) => [r, i]).sort((a, b) => (b[0].pct - a[0].pct) || (cls(a[0]) - cls(b[0])) || (a[1] - b[1])).map(([r]) => r);
   }
   out.merged = mergeGroups(out.groups || []);
   if (out.similar) out.similarMerged = mergeGroups(out.similar);

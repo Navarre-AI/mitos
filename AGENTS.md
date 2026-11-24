@@ -125,6 +125,15 @@ There is no unit test suite. `npm test` does not exist. The checks are:
   `--concurrency` above 4 measures the DuckDB queue, not the search.
 - `node scripts/check-order.mjs`: proves the one display-name map. Prints
   PASS or FAIL.
+- `node scripts/make-test-data.mjs --out test-data`: fictional People,
+  Companies, Products and Orders (5,000 / 625 / 780 / 20,000 rows, seeded)
+  with traps planted on purpose: nicknames, typos, Greek names typed in
+  Latin letters, surnames that collide with product words. It also writes
+  `test-data/cases.json`, whose answers are known. Run Mitos on it with
+  `MITOS_SAMPLE_DIR=test-data` and a `DATA_DIR` whose `config.json` lists
+  those four tables, then `EVAL_CASES=test-data/cases.json npm run eval`.
+  46 of 46 on 2026-11-24. A case with `notAny` fails when one of those
+  strings shows anywhere in the result.
 - `curl "$URL/api/health?key=$SITE_PASSWORD"` for liveness.
 
 ## The API, one line each

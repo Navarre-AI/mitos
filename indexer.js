@@ -12,7 +12,7 @@ import { fileURLToPath } from "url";
 import { fmConfigured, fetchSchema, fetchRowsByKeys, fmReason } from "./fm.js";
 import {
   sql, syncTables, loadSampleData, sampleAvailable, sampleUpdatedAt, storeManifest,
-  ensureIndexTable, indexHashes, upsertIndexRows, deleteIndexRows, indexStats, normalizeText, clearIndexRows,
+  ensureIndexTable, indexHashes, upsertIndexRows, deleteIndexRows, indexStats, indexText, backfillGreekLatin, clearIndexRows,
   upsertShadowRows, deleteShadowRows, passEstimate, buildTextIndex, keyText,
 } from "./store.js";
 import { DEFAULT_TABLES } from "./tables.config.js";
@@ -205,6 +205,10 @@ async function doBuild(emit, shouldStop = () => false, expected = {}, full = fal
 
   await ensureIndexTable();
   if (rebuild && fromScratch) await clearIndexRows();
+  try {
+    const greek = await backfillGreekLatin();
+    if (greek) onEvent({ type: "note", note: `Latin spellings added to ${greek} Greek records` });
+  } catch (e) { onEvent({ type: "note", note: `Latin spellings for Greek records skipped: ${String(e.message).slice(0, 120)}` }); }
   // A config change can leave index rows for tables that are no longer
   // configured. Remove them: search only ever shows configured tables.
   const nameList = names.map((n) => `'${esc(n)}'`).join(",");
@@ -390,8 +394,8 @@ async function indexOneTable(table, t, onEvent, summary, { onlyIds = null } = {}
       const title = String(Object.values(display)[0] ?? "");
       return {
         id, display, sourceText,
-        searchText: normalizeText(Object.values(record).join(" ")),
-        titleText: normalizeText(title),
+        searchText: indexText(Object.values(record).join(" ")),
+        titleText: indexText(title),
         modified: modCol && row[modCol] ? String(row[modCol]).replace("T", " ").replace(/(Z|[+-]\d\d:?\d\d)$/, "").slice(0, 19) : null,
         nums: [...new Set(typed.nums)],
         dates: [...new Set(typed.dates)],

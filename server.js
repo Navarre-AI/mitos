@@ -878,8 +878,22 @@ function profileFields(rows, fields) {
 
 // Which field names a record. Lower is better; the first display field is
 // the result title, so this order decides what a person reads first.
+// Which fields make the 12-field cap of the proposal. Schema order alone cut
+// the artist's name from 28,256 artworks while four measurement fields got in
+// (2026-11-24). Words people search for first, codes and sizes last; the
+// schema order breaks ties (the sort is stable).
+function searchRank(name) {
+  const n = name.replace(/^c(?=[A-Z_])_?/, "").toLowerCase(); // cFullName, c_Name: a calc prefix; "company" keeps its c
+  if (/name|title|artist|author|maker|creator|company|organi[sz]ation|customer|client|contact|person|vendor|supplier|brand|model/.test(n)) return 0;
+  if (/email|phone|mobile|city|country|nationality|place|address|street|category|type|classification|department|medium|tag|keyword|subject/.test(n)) return 1;
+  if (/description|notes?$|text$|body|summary|comment|provenance|credit|caption/.test(n)) return 2;
+  if (/width|height|depth|diameter|length|weight|size|dimension|qty|quantity|count|sort|order$|code$|flag|status|location/.test(n)) return 4;
+  return 3;
+}
+const capFields = (fields, n) => fields.map((f, i) => [f, i]).sort((a, b) => searchRank(a[0].name ?? a[0]) - searchRank(b[0].name ?? b[0]) || a[1] - b[1]).slice(0, n).sort((a, b) => a[1] - b[1]).map(([f]) => f);
+
 function titleRank(name) {
-  const n = name.toLowerCase().replace(/^c_?/, "");
+  const n = name.replace(/^c(?=[A-Z_])_?/, "").toLowerCase(); // cFullName, c_Name: a calc prefix; "company" keeps its c
   if (/^(full ?name|name|company|organi[sz]ation|business)$/.test(n)) return 0;
   if (/name/.test(n)) return 1;
   // A title is a short name-like field. A description is a paragraph and
@@ -1084,7 +1098,7 @@ async function buildScan(refresh) {
         fields: t.fields.map((f) => ({ name: f.name, type: f.type, ...(f.calc ? { calc: true } : {}), ...(f.storedCalc ? { stored: true } : {}), ...(f.summary ? { summary: true } : {}), ...(f.global ? { global: true } : {}) })),
         included: Boolean(saved[t.name]),
         _usable: usable.map((f) => f.name), _typed: typed, _schema: t,
-        proposal: saved[t.name] || { pk, mitosJson: Boolean(jsonField), textFields: [...usable.slice(0, 12).map((f) => f.name), ...typed.slice(0, 8)], displayFields: usable.slice(0, 12).map((f) => f.name).sort((a, b) => titleRank(a) - titleRank(b)).slice(0, 4) },
+        proposal: saved[t.name] || { pk, mitosJson: Boolean(jsonField), textFields: [...capFields(usable, 12).map((f) => f.name), ...typed.slice(0, 8)], displayFields: capFields(usable, 12).map((f) => f.name).sort((a, b) => titleRank(a) - titleRank(b)).slice(0, 4) },
       };
     });
 
@@ -1123,7 +1137,7 @@ async function buildScan(refresh) {
             });
             t.sampled = true;
             if (!t.included) {
-              t.proposal.textFields = [...keep.slice(0, 12), ...t._typed.slice(0, 8)];
+              t.proposal.textFields = [...capFields(keep, 12), ...t._typed.slice(0, 8)];
               const title = t.titleField && keep.includes(t.titleField) ? [t.titleField] : [];
               t.proposal.displayFields = [...title, ...keep.slice().sort((a, b) => titleRank(a) - titleRank(b)).filter((f) => !title.includes(f))].slice(0, 4);
             }

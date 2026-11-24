@@ -680,7 +680,9 @@ export async function clearIndexRows() {
 // Out-of-box play: when no FileMaker connection is configured, load the
 // bundled fictional dataset (sample-data/*.csv) so a fresh clone works with
 // just the two AI keys. The first real FM sync replaces these tables.
-const SAMPLE_DIR = path.join(__dirname, "sample-data");
+// MITOS_SAMPLE_DIR points at other CSVs, such as the ones
+// scripts/make-test-data.mjs writes (with a matching data/config.json).
+const SAMPLE_DIR = process.env.MITOS_SAMPLE_DIR || path.join(__dirname, "sample-data");
 
 export function sampleAvailable() {
   if (process.env.LOAD_SAMPLE === "0" || process.env.LOAD_SAMPLE === "false") return false;
@@ -730,6 +732,45 @@ export function normalizeText(s) {
   return flat ? ` ${flat} ` : "";
 }
 export const tokenize = (normalized) => normalized.split(" ").filter(Boolean);
+
+// Greek words get their Latin spelling too, so "Giorgos Papadopoulos" finds
+// Γιώργος Παπαδόπουλος (2026-11-24: 10 of 10 Latin-typed Greek names missed).
+// One plain romanization, close to ELOT 743, on text already normalized
+// (lower case, no accents, ς as σ). χ gives both "ch" and "h": people type
+// Chatzidakis and Hatzidakis. Index side only: the query is never changed,
+// and what a person reads is the record's own Greek.
+const GREEK_PAIRS = [["ου", "ou"], ["αυ", "av"], ["ευ", "ev"], ["γγ", "ng"], ["γκ", "gk"], ["μπ", "b"], ["ντ", "nt"]];
+const GREEK_ONE = { α: "a", β: "v", γ: "g", δ: "d", ε: "e", ζ: "z", η: "i", θ: "th", ι: "i", κ: "k", λ: "l", μ: "m",
+  ν: "n", ξ: "x", ο: "o", π: "p", ρ: "r", σ: "s", τ: "t", υ: "y", φ: "f", χ: "ch", ψ: "ps", ω: "o" };
+const HAS_GREEK = /[Ͱ-Ͽ]/;
+function romanize(word) {
+  let out = "";
+  for (let i = 0; i < word.length; ) {
+    const two = word.slice(i, i + 2);
+    const pair = GREEK_PAIRS.find(([g]) => g === two);
+    if (pair) { out += (pair[0] === "μπ" && i > 0) ? "mp" : pair[1]; i += 2; continue; }
+    out += GREEK_ONE[word[i]] ?? word[i];
+    i++;
+  }
+  return out;
+}
+export function greekLatin(normalized) {
+  const extra = [];
+  for (const w of tokenize(normalized)) {
+    if (!HAS_GREEK.test(w)) continue;
+    const r = romanize(w);
+    if (r !== w) extra.push(r);
+    if (r.includes("ch")) extra.push(r.replace(/ch/g, "h"));
+  }
+  return extra.length ? [...new Set(extra)].join(" ") : "";
+}
+// The index's form of a text: normalized, plus the Latin spelling of any
+// Greek word. Search and title columns both use it.
+export function indexText(s) {
+  const n = normalizeText(s);
+  const extra = greekLatin(n);
+  return extra ? `${n}${extra} ` : n;
+}
 
 // Typed columns beside the text. Search never guesses a type from the text:
 // the indexer decides per field (number, date, email, phone) and the query
@@ -1003,6 +1044,39 @@ export async function upsertIndexRows(srcTable, rows) {
   return unique.length;
 }
 
+// Rows indexed before the Greek Latin forms existed get them in place: an
+// UPDATE of the two search columns, nothing else. An upsert would delete the
+// row and its search notes and vector with it, and the next sync would pay to
+// write them again. Runs at the start of every sync; once every Greek row has
+// its Latin forms it finds nothing to do.
+export async function backfillGreekLatin() {
+  const rows = await sql(
+    `SELECT src_table, record_id, search_text, title_text FROM mitos_index WHERE regexp_matches(search_text, '[α-ω]')`
+  ).catch(() => []);
+  const has = (text, extra) => extra.split(" ").every((w) => text.includes(` ${w} `));
+  const fix = [];
+  for (const r of rows) {
+    const s = r.search_text || "", t = r.title_text || "";
+    const es = greekLatin(s), et = greekLatin(t);
+    if ((!es || has(s, es)) && (!et || has(t, et))) continue;
+    fix.push({ src_table: r.src_table, record_id: r.record_id,
+      search_text: es && !has(s, es) ? `${s}${es} ` : s, title_text: et && !has(t, et) ? `${t}${et} ` : t });
+  }
+  if (!fix.length) return 0;
+  const file = path.join(TMP_DIR, `greek-${process.pid}-${Date.now()}.json`);
+  try {
+    fs.writeFileSync(file, JSON.stringify(fix));
+    await sql(
+      `CREATE TEMP TABLE _g AS SELECT * FROM read_json('${esc(file)}', columns={src_table: 'VARCHAR', record_id: 'VARCHAR', search_text: 'VARCHAR', title_text: 'VARCHAR'}, format='array', maximum_object_size=16777216);` +
+      `UPDATE mitos_index SET search_text = _g.search_text, title_text = _g.title_text FROM _g WHERE mitos_index.src_table = _g.src_table AND mitos_index.record_id = _g.record_id;`,
+      { allowWrite: true }
+    );
+  } finally {
+    try { fs.unlinkSync(file); } catch {}
+  }
+  return fix.length;
+}
+
 // Ids go through a temp JSON file: a table can lose tens of thousands of
 // rows at once, and a literal list that long is the wrong shape for SQL.
 export async function deleteIndexRows(srcTable, recordIds) {
@@ -1219,10 +1293,12 @@ export async function fuzzySearch(words, { perTable = 5, minSim = 0.86, tables }
   // spellings; the row scores its WEAKEST word. Every word typed has to be
   // close to some word in the name ("macon iron" is not "marco dixon").
   // A word under four letters must match a title word exactly: "inn"
-  // against "in" scores 0.93 on Jaro-Winkler and means nothing.
+  // against "in" scores 0.93 on Jaro-Winkler and means nothing. The same
+  // goes for a short word in the title: "bolt" against "bot" scores 0.93,
+  // and "robert bolt" found a Jet Bot robot vacuum (2026-11-24).
   const best = (w) => w.length < 4
     ? `(CASE WHEN list_contains(string_split(trim(title_text), ' '), '${w}') THEN 1.0 ELSE 0.0 END)`
-    : `list_max(list_transform(string_split(trim(title_text), ' '), lambda t: jaro_winkler_similarity(t, '${w}')))`;
+    : `list_max(list_transform(string_split(trim(title_text), ' '), lambda t: CASE WHEN length(t) < 4 THEN (CASE WHEN t = '${w}' THEN 1.0 ELSE 0.0 END) ELSE jaro_winkler_similarity(t, '${w}') END))`;
   const perWord = groups.map((g) => (g.length === 1 ? best(g[0]) : `greatest(${g.map(best).join(", ")})`));
   const tokens = ws.length === 1 ? perWord[0] : `least(${perWord.join(", ")})`;
   const sim = `greatest(${whole}, ${packed}, ${tokens})`;
