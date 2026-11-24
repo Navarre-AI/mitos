@@ -107,7 +107,7 @@ Facts that matter when you run it:
 
 ## Test it
 
-There is no unit test suite. `npm test` does not exist. The checks are:
+The checks (`npm test` runs the search suite on the sample data, `scripts/test.mjs`) are:
 
 - `npm run eval`: runs the 29 cases in `eval/cases.json` against a running
   server (`MITOS_URL`, `SITE_PASSWORD` when set). Each case names the query,

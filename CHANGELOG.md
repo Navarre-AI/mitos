@@ -2,7 +2,12 @@
 
 Newest first. The commit log has the detail; this is the story.
 
-## 1.2 (in progress)
+## 1.2.0, 2026-11-24
+
+- **Exact beats close.** A close spelling can no longer outrank a record that holds every typed word ("whistler" lists the Whistler etchings above a Whistle Kettle), and a record that matched exactly is no longer tagged as a close spelling. Short words in a title (three letters or less) count only when typed exactly, so "robert bolt" no longer finds a Jet Bot robot vacuum.
+- **Hedge words.** "someone named Pissarro or something like that" finds Pissarro: or, like, that, someone, named, maybe and friends are filler.
+- **Better suggested fields.** When a new table has more than 12 text fields, names and titles are kept first and sizes and codes go last, so an artist's name is no longer cut for a width field.
+- **Test data.** `node scripts/make-test-data.mjs` writes fictional People, Companies, Products and Orders with typos and nicknames planted on purpose, plus test cases whose answers are known (46 of 46). `npm run eval` takes `EVAL_CASES` and `notAny`.
 
 - **Most-words fallback.** When every word must match and nothing does, Mitos drops filler words ("find Bob Whitfield please"), then falls back to records with at least half the words, ranked by how many. Only on an empty answer.
 - **Find more.** Month names read as dates ("March 4, 2019", "4 March 2019", "May 2026" as a month range); a slip inside an email address finds the close address; Mathieu joins Matt and Shivawn joins Siobhan in the name list; `==exact title` and `W*field` (letters inside one word) join `=`, `*` and "phrase". Word-start prefixes and plain-typed accents already worked and now have test cases. A general phonetic matcher was not built: no small dependency-free rule gets Siobhan right, so the name list carries those spellings.
@@ -11,7 +16,7 @@ Newest first. The commit log has the detail; this is the story.
 
 - **AI re-ranking over exact and semantic rows.** With the reranker on, the vector pool is 20 per table and one fast-model call sees the exact rows plus the 10 nearest semantic ones. It picks which semantic rows join the main list, the table order and the Best match; exact hits are never removed or put under a semantic row, and a late or failed call changes nothing. `npm run bench` now turns the reranker on for its AI run (AI cases: first in the list 94% to 100% for meaning cases, found 100%). `npm run test:ai` checks the promises with a key.
 
-- **Greek and Chinese.** The sample gains three people (P0201 Γιώργος Μαράκης, P0202 乔治·陈, P0203 George Martin). Greek final sigma (ς) is the same letter as σ on both sides, so a word typed either way finds the record; accents and capitals already worked. A Chinese name finds by its characters, and one character (乔) finds the name it starts. The name table now spans scripts (george = γιώργος = 乔治; john = γιάννης = 约翰), and the semantic query is embedded with those other forms added, since a vector model rarely knows 乔治 is George. A semantic row's cut-off no longer takes its bar from an exact hit's own vector. "george maraki" with Enrichment, Vectors and the reranker on lists Γιώργος Μαράκης (best), George Martin (close spelling) and 乔治·陈 (semantic, well down the list); vectors alone keep 乔治·陈 far from that query.
+- **Other alphabets.** Names typed in Latin letters find names stored in Greek, final sigma folds to sigma, and the name table spans scripts.
 
 - **House words.** Settings, General tab: a plain box, one rule a line (`DSLR = digital SLR camera`, `PO = purchase order = purchase requisition`). It reuses the name table's "also" path, so a rule only adds matches and never removes one, and the reason shows it ("dslr as digital slr camera"). A whole query that equals a multi-word side reads as that phrase and finds the short forms. Stored as `houseWords` in `config.json`; applied at search time, so no re-sync.
 
