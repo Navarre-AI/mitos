@@ -92,7 +92,12 @@ export async function search(query, opts = {}) {
 // --- Phase 1 --------------------------------------------------------------------------------
 // Words that ask for a search and are not part of any name. Used only by the
 // fallback for a query that found nothing, to drop them and try again.
-const FILLER = new Set(["find", "please", "the", "a", "an", "contact", "show", "me", "for", "of", "to", "with", "and", "my", "get", "search", "look", "up", "lookup", "about", "info", "record", "records", "who", "is", "i", "want", "need", "where"]);
+const FILLER = new Set(["find", "please", "the", "a", "an", "contact", "show", "me", "for", "of", "to", "with", "and", "my", "get", "search", "look", "up", "lookup", "about", "info", "record", "records", "who", "is", "i", "want", "need", "where",
+  // How people hedge: "someone named Eusebio Dilthey or something like that"
+  // found a portrait whose provenance paragraph holds "someone", "or", "like"
+  // and "that" (2026-11-24). Filler is only dropped when every word together
+  // found nothing, so a title that has these words still finds them first.
+  "someone", "somebody", "named", "called", "or", "something", "like", "that", "maybe", "think", "it", "was", "this", "thing", "guy", "kind", "sort"]);
 
 async function runExact(query, { limit, dateFormat, tables, fuzzy, stageCfg, enrichTables = [], clicks = null }) {
   const t0 = Date.now();
