@@ -25,7 +25,5 @@ test-data/
 SECURITY-NEXT.md
 docs/EXPLAINER-*.md
 docs/VERIFICATION-*.md
-docs/Feature Ideas.md
-docs/Use Case Ideas.md
 docs/pythia-road-switch.md
 review-tests/
